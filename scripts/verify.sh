@@ -70,6 +70,15 @@ run_step configure cmake -S "${verify_root}" -B "${verify_build}" \
 run_step build cmake --build "${verify_build}" -j 4
 
 run_test gradient_test gradient_test
+run_test core_perf_test core_perf_test
+run_test schema_model_test schema_model_test
+run_test multichannel_test multichannel_test
+run_test geo_test geo_test
+run_test geo_dense_test geo_dense_test
+run_test sentinel_test sentinel_test
+run_test provenance_test provenance_test
+run_test h3_test h3_test
+run_test ablation_protocol_test ablation_protocol_test
 run_test training_test training_test
 run_test "TV-01A test" generalization_observatory_test
 run_test "TV-01B test" spatial_coverage_experiment_test
@@ -107,5 +116,7 @@ run_witness "TV-APP-00 pipeline" "${verify_build}/application_pipeline_test" \
     "synthetic_test_status=NOT_EVALUATED"
 
 printf '\n'
-pass "NATURAL APP PROBE" NOT_EVALUATED
-pass TEST "SEALED / NOT_EVALUATED"
+pass "SYNTHETIC TEST" "SEALED / NOT_EVALUATED"
+pass "NATURAL RGB CLAIM" "NOT_EVALUATED"
+pass "SENTINEL MULTIBAND CLAIM" "NOT_EVALUATED"
+pass "SPECTRAL ABLATION" "NOT_EVALUATED"

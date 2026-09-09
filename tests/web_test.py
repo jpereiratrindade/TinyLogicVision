@@ -377,12 +377,43 @@ def main():
                 assert "margin" in dec
                 assert dec["predicted_class"] in ("floresta", "campo", "solo")
 
+            # Verify asynchronous job execution endpoint
+            print("Verifying async jobs endpoint...")
+            job_payload = {
+                "type": "train",
+                "dataset_id": dataset_name,
+                "model_name": f"async_{model_name}"
+            }
+            req_job = urllib.request.Request(
+                f"{base_url}/api/jobs",
+                data=json.dumps(job_payload).encode("utf-8"),
+                headers={"Content-Type": "application/json"}
+            )
+            with urllib.request.urlopen(req_job) as res:
+                assert res.status == 200
+                job_res = json.loads(res.read().decode("utf-8"))
+                assert job_res["success"] is True
+                assert "job_id" in job_res
+                jid = job_res["job_id"]
+
+            # Poll job status
+            time.sleep(0.5)
+            with urllib.request.urlopen(f"{base_url}/api/jobs/{jid}") as res:
+                assert res.status == 200
+                poll_res = json.loads(res.read().decode("utf-8"))
+                assert poll_res["success"] is True
+                assert poll_res["job"]["job_id"] == jid
+                assert poll_res["job"]["state"] in ("running", "completed")
+
             # Clean up test dataset, model and runs from .tinyvision
             shutil.rmtree(ds_dir, ignore_errors=True)
             shutil.rmtree(REPO_ROOT / ".tinyvision" / "runs" / run_id, ignore_errors=True)
             model_file = REPO_ROOT / ".tinyvision" / "models" / f"{model_name}.tlv"
             if model_file.exists():
                 model_file.unlink()
+            async_model = REPO_ROOT / ".tinyvision" / "models" / f"async_{model_name}.tlv"
+            if async_model.exists():
+                async_model.unlink()
 
         print("TinyLogicVision Web GUI test suite PASS")
 

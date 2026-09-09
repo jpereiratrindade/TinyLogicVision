@@ -31,6 +31,7 @@ except ImportError:
     HAS_PIL = False
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+CLI_BIN = REPO_ROOT / "bin" / "tinyvision"
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 RUNTIME_ROOT = REPO_ROOT / ".tinyvision"
 
@@ -47,6 +48,8 @@ SAFE_NAME_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
 
 RUNS_LOCK = threading.Lock()
 ACTIVE_RUNS = {}
+JOBS_LOCK = threading.Lock()
+JOBS = {}
 
 
 def sanitize_name(name: str) -> str:
@@ -176,6 +179,11 @@ class TinyVisionRequestHandler(http.server.BaseHTTPRequestHandler):
             self.handle_api_list_datasets()
         elif path == "/api/models":
             self.handle_api_list_models()
+        elif path == "/api/jobs":
+            self.handle_api_list_jobs()
+        elif path.startswith("/api/jobs/"):
+            job_id = sanitize_name(path[len("/api/jobs/") :])
+            self.handle_api_get_job(job_id)
         else:
             self.send_error_json("Not found", 404)
 
@@ -195,6 +203,8 @@ class TinyVisionRequestHandler(http.server.BaseHTTPRequestHandler):
             self.handle_api_dense_map()
         elif path == "/api/evaluate":
             self.handle_api_evaluate()
+        elif path == "/api/jobs":
+            self.handle_api_create_job()
         else:
             self.send_error_json("Endpoint not found", 404)
 
@@ -933,6 +943,110 @@ class TinyVisionRequestHandler(http.server.BaseHTTPRequestHandler):
 
     def handle_api_list_models(self):
         self.send_json({"success": True, "models": self.get_models_list()})
+
+    def handle_api_create_job(self):
+        content_length = int(self.headers.get("Content-Length", 0))
+        body = self.rfile.read(content_length)
+        try:
+            data = json.loads(body.decode("utf-8"))
+        except Exception:
+            self.send_error_json("Invalid JSON payload", 400)
+            return
+
+        job_type = data.get("type")
+        job_id = f"job-{uuid.uuid4().hex[:8]}"
+
+        if job_type == "train":
+            dataset_id = sanitize_name(data.get("dataset_id", ""))
+            model_name = sanitize_name(data.get("model_name", f"model_{job_id}"))
+            dataset_dir = DATASETS_DIR / dataset_id
+            if not dataset_dir.is_dir():
+                self.send_error_json("Dataset not found", 404)
+                return
+
+            model_path = MODELS_DIR / f"{model_name}.tlv"
+            cmd = [str(CLI_BIN), "train", str(dataset_dir), str(model_path)]
+
+        elif job_type == "dense_map":
+            model_id = sanitize_name(data.get("model_id", ""))
+            image_name = data.get("image_name", "")
+            stride = int(data.get("stride", 1))
+            conf = float(data.get("confidence_threshold", 0.0))
+            margin = float(data.get("margin_threshold", 0.0))
+            threads = int(data.get("threads", 0))
+
+            model_path = MODELS_DIR / f"{model_id}.tlv"
+            if not model_path.is_file():
+                self.send_error_json("Model not found", 404)
+                return
+
+            image_path = UPLOADS_DIR / image_name
+            if not image_path.is_file():
+                self.send_error_json("Source image not found", 404)
+                return
+
+            run_id = f"run_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:6]}"
+            run_dir = RUNS_DIR / run_id
+            cmd = [str(CLI_BIN), "map", str(model_path), str(image_path), str(run_dir),
+                   "--stride", str(stride),
+                   "--confidence", str(conf),
+                   "--margin", str(margin)]
+            if threads > 0:
+                cmd.extend(["--threads", str(threads)])
+        else:
+            self.send_error_json("Unsupported job type", 400)
+            return
+
+        job_record = {
+            "job_id": job_id,
+            "type": job_type,
+            "state": "running",
+            "progress": 0.0,
+            "started_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            "finished_at": None,
+            "command": cmd,
+            "exit_code": None,
+            "log": "",
+            "error": None
+        }
+
+        with JOBS_LOCK:
+            JOBS[job_id] = job_record
+
+        def worker(jid, command):
+            try:
+                proc = subprocess.run(command, capture_output=True, text=True)
+                with JOBS_LOCK:
+                    j = JOBS[jid]
+                    j["exit_code"] = proc.returncode
+                    j["log"] = proc.stdout + ("\n" + proc.stderr if proc.stderr else "")
+                    j["state"] = "completed" if proc.returncode == 0 else "failed"
+                    j["finished_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+                    j["progress"] = 1.0
+            except Exception as exc:
+                with JOBS_LOCK:
+                    j = JOBS[jid]
+                    j["state"] = "failed"
+                    j["error"] = str(exc)
+                    j["finished_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+        t = threading.Thread(target=worker, args=(job_id, cmd), daemon=True)
+        t.start()
+
+        self.send_json({"success": True, "job_id": job_id, "state": "running"})
+
+    def handle_api_get_job(self, job_id: str):
+        with JOBS_LOCK:
+            job = JOBS.get(job_id)
+        if not job:
+            self.send_error_json("Job not found", 404)
+            return
+        self.send_json({"success": True, "job": job})
+
+    def handle_api_list_jobs(self):
+        with JOBS_LOCK:
+            jobs_list = list(JOBS.values())
+        self.send_json({"success": True, "jobs": jobs_list})
 
 
 class ThreadedHTTPServer(socketserver.ThreadingMixIn, http.server.HTTPServer):

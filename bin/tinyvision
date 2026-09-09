@@ -122,6 +122,13 @@ case "${cmd}" in
         fi
         exec "${verify_script}" "$@"
         ;;
+    benchmark)
+        target_bin="${build_dir}/tinyvision_benchmark"
+        if ! check_executable "${target_bin}" "Build the project first: cmake -S '${repo_root}' -B '${build_dir}' -G Ninja -DCMAKE_BUILD_TYPE=Release && cmake --build '${build_dir}'"; then
+            exit 1
+        fi
+        exec "${target_bin}" "$@"
+        ;;
     *)
         printf 'tinyvision: unknown command: %s\n\n' "${cmd}" >&2
         print_usage >&2

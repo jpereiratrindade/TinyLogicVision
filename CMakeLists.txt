@@ -52,6 +52,9 @@ target_link_libraries(tinyvision_evaluate PRIVATE tinyvision_application)
 add_executable(tinyvision_map src/application_map.cpp)
 target_link_libraries(tinyvision_map PRIVATE tinyvision_application)
 
+add_executable(tinyvision_benchmark src/application_benchmark.cpp)
+target_link_libraries(tinyvision_benchmark PRIVATE tinyvision_application)
+
 enable_testing()
 
 add_executable(gradient_test tests/gradient_test.cpp)
