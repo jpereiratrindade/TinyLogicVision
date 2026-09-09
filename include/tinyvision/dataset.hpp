@@ -25,7 +25,16 @@ enum class SyntheticSplit {
     Test,
 };
 
+enum class TrainingSpatialCoverage {
+    ControlA,
+    InterventionB,
+};
+
 Dataset make_synthetic_dataset(std::size_t samples_per_class = 24, std::uint32_t seed = 11);
+Dataset make_spatial_coverage_training_dataset(
+    TrainingSpatialCoverage coverage,
+    std::size_t samples_per_class = 24,
+    std::uint32_t seed = 11);
 Dataset make_generalization_dataset(SyntheticSplit split,
                                     std::size_t samples_per_class = 24,
                                     std::uint32_t seed = 101);

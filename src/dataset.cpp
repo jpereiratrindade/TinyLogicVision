@@ -44,7 +44,9 @@ bool shifted_foreground(std::size_t label,
 
 } // namespace
 
-Dataset make_synthetic_dataset(std::size_t samples_per_class, std::uint32_t seed) {
+Dataset make_spatial_coverage_training_dataset(TrainingSpatialCoverage coverage,
+                                               std::size_t samples_per_class,
+                                               std::uint32_t seed) {
     if (samples_per_class == 0) throw std::invalid_argument("samples_per_class must be positive");
     Dataset dataset;
     dataset.width = kWidth;
@@ -59,7 +61,6 @@ Dataset make_synthetic_dataset(std::size_t samples_per_class, std::uint32_t seed
             Sample sample;
             sample.label = label;
             sample.rgb.resize(kWidth * kHeight * 3);
-            const std::size_t phase = sample_index % 2;
             const std::array<double, 3> tint = {
                 std::clamp(0.72 + color_jitter(rng), 0.0, 1.0),
                 std::clamp(0.66 + color_jitter(rng), 0.0, 1.0),
@@ -68,7 +69,10 @@ Dataset make_synthetic_dataset(std::size_t samples_per_class, std::uint32_t seed
 
             for (std::size_t y = 0; y < kHeight; ++y) {
                 for (std::size_t x = 0; x < kWidth; ++x) {
-                    const bool fg = training_foreground(label, x, y, phase);
+                    const bool fg = coverage == TrainingSpatialCoverage::ControlA
+                        ? training_foreground(label, x, y, sample_index % 2)
+                        : shifted_foreground(
+                              label, x, y, sample_index % 4, (sample_index / 4) % 4);
                     const double level = fg ? 0.85 : 0.15;
                     const std::size_t base = (y * kWidth + x) * 3;
                     for (std::size_t c = 0; c < 3; ++c) {
@@ -82,6 +86,11 @@ Dataset make_synthetic_dataset(std::size_t samples_per_class, std::uint32_t seed
 
     std::shuffle(dataset.samples.begin(), dataset.samples.end(), rng);
     return dataset;
+}
+
+Dataset make_synthetic_dataset(std::size_t samples_per_class, std::uint32_t seed) {
+    return make_spatial_coverage_training_dataset(
+        TrainingSpatialCoverage::ControlA, samples_per_class, seed);
 }
 
 Dataset make_generalization_dataset(SyntheticSplit split,

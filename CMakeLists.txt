@@ -9,6 +9,7 @@ add_library(tinyvision_core
     src/model.cpp
     src/dataset.cpp
     src/observation.cpp
+    src/spatial_experiment.cpp
 )
 target_include_directories(tinyvision_core PUBLIC include)
 target_compile_options(tinyvision_core PRIVATE -Wall -Wextra -Wpedantic)
@@ -18,6 +19,9 @@ target_link_libraries(tinyvision PRIVATE tinyvision_core)
 
 add_executable(tinyvision_generalization src/generalization.cpp)
 target_link_libraries(tinyvision_generalization PRIVATE tinyvision_core)
+
+add_executable(tinyvision_spatial_coverage src/spatial_coverage.cpp)
+target_link_libraries(tinyvision_spatial_coverage PRIVATE tinyvision_core)
 
 enable_testing()
 
@@ -32,3 +36,7 @@ add_test(NAME training_test COMMAND training_test)
 add_executable(generalization_observatory_test tests/generalization_observatory_test.cpp)
 target_link_libraries(generalization_observatory_test PRIVATE tinyvision_core)
 add_test(NAME generalization_observatory_test COMMAND generalization_observatory_test)
+
+add_executable(spatial_coverage_experiment_test tests/spatial_coverage_experiment_test.cpp)
+target_link_libraries(spatial_coverage_experiment_test PRIVATE tinyvision_core)
+add_test(NAME spatial_coverage_experiment_test COMMAND spatial_coverage_experiment_test)
