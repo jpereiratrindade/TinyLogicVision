@@ -1481,6 +1481,21 @@ function setupDenseMap() {
       updateDenseSchemaCompatibility();
       return;
     }
+    const sourceWidth = sourceIsSentinel
+      ? Number(state.sentinelDescriptor.native_width || state.sentinelDescriptor.width)
+      : Number(state.imageMeta && state.imageMeta.width);
+    const sourceHeight = sourceIsSentinel
+      ? Number(state.sentinelDescriptor.native_height || state.sentinelDescriptor.height)
+      : Number(state.imageMeta && state.imageMeta.height);
+    if (sourceWidth >= 8 && sourceHeight >= 8) {
+      const gridWidth = Math.floor((sourceWidth - 8) / stride) + 1;
+      const gridHeight = Math.floor((sourceHeight - 8) / stride) + 1;
+      const estimatedDecisions = gridWidth * gridHeight;
+      if (estimatedDecisions > 5000000) {
+        alert(`Grade muito grande para o motor atual em memória: ${estimatedDecisions.toLocaleString('pt-BR')} decisões. Aumente o stride; o limite seguro é 5.000.000.`);
+        return;
+      }
+    }
 
     el.btnRunDenseMap.disabled = true;
     el.denseProgress.classList.remove('hidden');

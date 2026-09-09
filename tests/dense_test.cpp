@@ -341,6 +341,24 @@ int main() {
             }
         }
 
+        // 10. Current engine is O(N) in result storage: reject oversized grids
+        // before allocation unless the operator explicitly changes the limit.
+        {
+            tinyvision::DenseMapConfig limited;
+            limited.stride = 1;
+            limited.max_decisions = 10;
+            bool rejected = false;
+            try {
+                (void)tinyvision::classify_dense(model, image, limited);
+            } catch (const std::length_error&) {
+                rejected = true;
+            }
+            if (!rejected) {
+                std::cerr << "in-memory dense decision safety limit was not enforced\n";
+                return 1;
+            }
+        }
+
         // Cleanup
         std::error_code ec;
         std::filesystem::remove_all(tmp_out, ec);

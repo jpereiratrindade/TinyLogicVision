@@ -481,10 +481,10 @@
           <div>
             <h3>🗺️ Classificação Espacial Densa & Saídas Georreferenciadas (GEO / H3)</h3>
             <p class="help-text">
-              Motor de streaming em C++ com suporte a multithreading, saída GeoTIFF 6.0, indexação $O(1)$ e agregação H3.
+              Motor paralelo C++ em memória, com limite preventivo de decisões, saída GeoTIFF, índice binário $O(1)$ e H3 oficial.
             </p>
           </div>
-          <span class="badge-version">Tiled Streaming Engine</span>
+          <span class="badge-version">Parallel In-Memory Engine</span>
         </div>
 
         <div class="dense-controls-grid">
@@ -567,7 +567,7 @@
           </button>
           <div id="dense-progress" class="progress-box hidden">
             <div class="spinner"></div>
-            <span id="dense-progress-text">Processando streaming de janelas em C++...</span>
+            <span id="dense-progress-text">Processando janelas em paralelo no motor C++...</span>
           </div>
         </div>
 

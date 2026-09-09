@@ -13,6 +13,7 @@
 #include <future>
 #include <iomanip>
 #include <iostream>
+#include <limits>
 #include <map>
 #include <sstream>
 #include <stdexcept>
@@ -323,7 +324,17 @@ DenseMapResult classify_dense_source(const ApplicationModel& model,
 
     const std::size_t grid_width = (source.width() - 8) / config.stride + 1;
     const std::size_t grid_height = (source.height() - 8) / config.stride + 1;
+    if (grid_height != 0 && grid_width > std::numeric_limits<std::size_t>::max() / grid_height) {
+        throw std::overflow_error("dense decision grid size overflow");
+    }
     const std::size_t total_decisions = grid_width * grid_height;
+    if (config.max_decisions != 0 && total_decisions > config.max_decisions) {
+        throw std::length_error(
+            "dense grid has " + std::to_string(total_decisions) +
+            " decisions, exceeding the in-memory safety limit of " +
+            std::to_string(config.max_decisions) +
+            "; increase stride or explicitly set --max-decisions 0/N");
+    }
 
     DenseMapResult result;
     result.source_width = source.width();
@@ -343,7 +354,7 @@ DenseMapResult classify_dense_source(const ApplicationModel& model,
     }
     num_threads = std::min<std::size_t>(num_threads, grid_height);
     result.thread_count = num_threads;
-    result.implementation_mode = "TILED_STREAMING";
+    result.implementation_mode = "PARALLEL_IN_MEMORY";
 
     const std::size_t num_classes = model.class_names.size();
     const std::size_t input_elements = model.network.input_size();
@@ -612,6 +623,7 @@ void export_dense_map(const DenseMapResult& result,
        << "    \"implementation_mode\": \"" << json_escape(result.implementation_mode) << "\",\n"
        << "    \"thread_count\": " << result.thread_count << ",\n"
        << "    \"tile_dimensions\": [" << result.config.tile_width << ", " << result.config.tile_height << "],\n"
+       << "    \"max_decisions\": " << result.config.max_decisions << ",\n"
        << "    \"decision_record_version\": 1,\n"
        << "    \"indexed_binary_available\": true\n"
        << "  },\n"

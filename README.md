@@ -1,9 +1,9 @@
 # TinyLogicVision
 
-TinyLogicVision is a deliberately tiny RGB vision-learning experiment written
-from scratch in C++23. Its current synthetic baseline is complete, deterministic,
-and independently verifiable from a clean clone. A separate TV-APP-00 surface
-can now train and apply the same tiny MLP to labeled PNG/JPEG patches.
+TinyLogicVision is a deliberately tiny RGB and Sentinel-2 vision-learning
+experiment written in C++23. Its synthetic baseline is deterministic and
+independently verifiable from a clean clone. The application surface supports
+RGB patches and native B2/B3/B4/B8 tensors with strict input-schema checks.
 
 ## Current status
 
@@ -15,14 +15,14 @@ can now train and apply the same tiny MLP to labeled PNG/JPEG patches.
 | TV-01C | Sealed synthetic TEST | NOT EXECUTED / SEALED |
 | TV-APP-00 | Real RGB application pipeline | READY — natural-image probe not evaluated |
 | Core Performance (TV-PERF-00) | Reusable zero-heap MLP workspaces | READY |
-| Tiled Dense Engine (TV-PERF-01) | Tiled streaming inference & binary O(1) index | READY |
+| Dense Engine (TV-PERF-01) | Parallel in-memory inference & binary O(1) index | READY WITH 5M SAFETY CAP — bounded-memory streaming not implemented |
 | Input Schema (TV-MB-00) | Generic WxHxC schema & Model format v2 | READY |
 | Multichannel Tensor (TV-MB-01) | Generic raster tensor & .tvp dataset foundation | READY |
-| Geospatial Raster (TV-GEO-00) | Optional GDAL source & strict band alignment | READY WHEN BUILT |
+| Geospatial Raster (TV-GEO-00) | GDAL source & strict band alignment | READY WITH GDAL |
 | Sentinel-2 10m (TV-S2-00) | Native B2/B3/B4/B8 10m modality (256 inputs) | READY |
-| Georeferenced Outputs (TV-GEO-01) | Dense GeoTIFF maps (class, confidence, margin) | READY WHEN BUILT |
-| Provenance & RIT (TV-EVIDENCE-00) | Directed evidence graph (JSON/JSONL lineage) | READY |
-| Geospatial H3 (TV-H3-00) | Hex discrete sampling, split partition & aggregation | READY WHEN BUILT |
+| Georeferenced Outputs (TV-GEO-01) | Standards-compliant GeoTIFF maps with CRS/full affine transform | READY WITH GDAL |
+| Provenance & RIT (TV-EVIDENCE-00) | Real JSON/JSONL lineage and Web explorer | READY |
+| Geospatial H3 (TV-H3-00) | Official H3 indexing after CRS→WGS84 transformation | READY WITH GDAL + H3 |
 | Spectral Ablation (TV-SPEC-00) | Neutral channel masking protocol | PREPARED / NOT_EVALUATED |
 | Web Async Jobs | Background CLI workers with polling on 127.0.0.1 | READY |
 | Application CLI | Unified command line interface & benchmark | READY |
@@ -43,7 +43,7 @@ O fluxo de trabalho interativo unificado oferece:
 3. **Regiões de Interesse (ROIs) & Particionamento H3**: Desenhe ROIs no canvas com validação de **1 ROI = 1 Split** e opção de **Particionamento Espacial H3** (1 célula H3 = 1 split) para prevenir spatial leakage;
 4. **Extração de Patches & Proveniência**: Extraia patches exatos de $8 \times 8$ (ou tensores nativos `.tvp`) com manifesto e grafo de proveniência RIT (`manifest.csv`, `dataset.json`, `provenance.json`);
 5. **Treinamento Síncrono ou Assíncrono**: Treine modelos v1/v2 em C++ (`./bin/tinyvision train`) em segundo plano com monitoramento em tempo real via aba de Jobs;
-6. **Classificação Densa, GeoTIFF & Agregação H3**: Execute o motor de streaming C++ (`./bin/tinyvision map`) com multithreading (`--threads N`), inspeção $O(1)$ por seek binário, download de GeoTIFFs (`class_map.tif`, `confidence.tif`, `margin.tif`) e agregação espacial H3 (`classification_h3.csv`);
+6. **Classificação Densa, GeoTIFF & Agregação H3**: Execute o motor paralelo em memória (`./bin/tinyvision map`) com multithreading (`--threads N`), limite preventivo padrão de 5 milhões de decisões, inspeção $O(1)$ por seek binário, GeoTIFFs e agregação H3 oficial;
 7. **Classificar & Avaliar**: Classifique amostras individuais e avalie splits mantendo o `PROBE` isolado.
 
 ### 2. Linha de Comando (CLI)
@@ -61,8 +61,12 @@ cmake --build build
 # 3. Classificação espacial densa em grade (respostas: "onde o modelo vê cada classe?")
 ./bin/tinyvision map \
     model.tlv \
-    sentinel_scene.png \
+    sentinel_preview.png \
     .tinyvision/runs/map01 \
+    --band-b2 B02_10m.tif \
+    --band-b3 B03_10m.tif \
+    --band-b4 B04_10m.tif \
+    --band-b8 B08_10m.tif \
     --stride 2 \
     --threads 8 \
     --confidence 0.50 \
@@ -97,11 +101,11 @@ cmake --build build
   - `grid_x, grid_y`: Coordenadas na grade discreta de decisões ($N_x \times N_y$).
   - `display_x, display_y`: Âncora visual inteira de exibição $(x + 4, y + 4)$.
   - `map_x, map_y`: Coordenadas no CRS projetado da fonte (quando georreferenciada).
-  - `h3_index`: Índice da célula hexadecimal H3 correspondente ao centro do patch.
+  - A célula H3 oficial correspondente ao centro é registrada na agregação `classification_h3.csv` após transformação do CRS da fonte para WGS84.
   - *Regra fundamental*: $\text{SUPPORT} \neq \text{DECISION POINT} \neq \text{DISPLAY CELL} \neq \text{H3 CELL}$.
 - **Geometria dos Artefatos**:
   - `class_map.png`, `confidence.png` (Probabilidade Top-1) e `margin.png` (Margem Top-1 − Top-2) são rasters no **GRID SPACE** ($N_x \times N_y$).
-  - `class_map.tif`, `confidence.tif` e `margin.tif` são rasters georreferenciados em formato GeoTIFF 6.0 com CRS e geotransform intactos.
+  - `class_map.tif`, `confidence.tif` e `margin.tif` preservam o CRS e derivam corretamente os seis coeficientes afins para a grade de decisões, inclusive rotação.
   - `overlay.png` é gerado pelo engine C++ como **autoridade única canônica** no espaço da imagem fonte ($W \times H$).
   - `classification_h3.csv` consolida estatísticas agregadas por célula H3 (classe dominante, proporção de classes e incerteza).
   - `decisions.bin` fornece índice binário compacto ($36\text{ bytes/registro}$) para inspeção espacial com tempo de acesso $O(1)$.
@@ -150,7 +154,7 @@ After cloning, run the complete project and synthetic baseline verification with
 # or: ./scripts/verify.sh
 ```
 
-The command configures and builds the Release/Ninja tree, runs all 8 test suites
+The command configures and builds the Release/Ninja tree, runs all 18 test suites
 (including the CLI, dense spatial classification, and Web test suites), and checks the TV-00, TV-01A, TV-01B, and TV-APP-00
 engineering witnesses. It does not evaluate synthetic TEST or a natural-image application probe.
 
@@ -164,7 +168,8 @@ ctest --test-dir build --output-on-failure
 ```
 
 Build prerequisites are a C++23 compiler, CMake, Ninja, and development packages
-for libpng and libjpeg.
+for libpng and libjpeg. GDAL and the official H3 library are optional at build
+time but required for native Sentinel rasters, GeoTIFF output, and H3 aggregation.
 
 
 ## Evidence sequence

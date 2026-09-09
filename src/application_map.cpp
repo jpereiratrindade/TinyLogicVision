@@ -19,6 +19,7 @@ int main(int argc, char** argv) {
                   << "  --confidence FLOAT    Minimum top-1 probability threshold [0.0..1.0] (default: 0.0)\n"
                   << "  --margin FLOAT        Minimum margin (top1 - top2) threshold [0.0..1.0] (default: 0.0)\n"
                   << "  --threads N           Number of inference threads (default: auto)\n"
+                  << "  --max-decisions N     In-memory safety limit (default: 5000000; 0 = explicit unlimited)\n"
                   << "  --band-b2 PATH        Native Sentinel-2 B2 10m raster\n"
                   << "  --band-b3 PATH        Native Sentinel-2 B3 10m raster\n"
                   << "  --band-b4 PATH        Native Sentinel-2 B4 10m raster\n"
@@ -46,6 +47,8 @@ int main(int argc, char** argv) {
                 config.margin_threshold = std::stod(argv[++i]);
             } else if (arg == "--threads" && i + 1 < argc) {
                 config.threads = static_cast<std::size_t>(std::stoul(argv[++i]));
+            } else if (arg == "--max-decisions" && i + 1 < argc) {
+                config.max_decisions = static_cast<std::size_t>(std::stoull(argv[++i]));
             } else if (arg == "--band-b2" && i + 1 < argc) {
                 sentinel_bands[0] = argv[++i];
                 has_sentinel_band[0] = true;

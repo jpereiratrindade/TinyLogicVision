@@ -97,6 +97,7 @@ struct DenseMapConfig {
     std::size_t threads{0};            // 0 = auto-detect hardware concurrency
     std::size_t tile_width{256};
     std::size_t tile_height{256};
+    std::size_t max_decisions{5'000'000}; // Safety cap for the current O(N) result storage; 0 = explicit unlimited.
 };
 
 struct DenseMapResult {
@@ -112,7 +113,7 @@ struct DenseMapResult {
     DenseMapConfig config;
     PaletteConfig palette;
     GeoMetadata metadata;
-    std::string implementation_mode{"TILED_STREAMING"};
+    std::string implementation_mode{"PARALLEL_IN_MEMORY"};
     std::size_t thread_count{1};
 };
 

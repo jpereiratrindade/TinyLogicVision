@@ -6,16 +6,17 @@
 experimental evidence          cd0a591 — TV-01B spatial-coverage result
 consolidated baseline          TV-READY-02 — dense RGB baseline frozen
 RGB application                READY — RGB application pipeline implemented & preserved
-Dense RGB                      READY — in-memory and tiled streaming dense spatial engine
+Dense RGB                      READY — parallel in-memory engine with 5M-decision safety cap
+Bounded-memory dense streaming NOT IMPLEMENTED — current result storage is O(number of decisions)
 CPU/memory optimized path      READY — zero-heap allocation hot inference workspaces (std::span)
 Multichannel foundation        READY — N-channel tensor abstraction (UINT8, UINT16, FLOAT32, FLOAT64)
 Model v2                       READY — format with explicit InputSchema & ChannelSpec
 Model v1 compatibility         READY — legacy .tlv format load & byte-for-byte numerical reproducibility
 Sentinel B2/B3/B4/B8           READY — 10m 4-band Sentinel-2 modality (8x8x4 -> 256 inputs)
-GDAL GEO source                READY WHEN BUILT — windowed raster input abstraction (TINYVISION_WITH_GDAL)
-Geo dense outputs              READY WHEN BUILT — georeferenced GeoTIFF class, confidence, margin rasters
-Provenance/RIT graph           READY — temporal evidence lineage (provenance.json, evidence.jsonl)
-H3 integration                 READY WHEN BUILT — discrete hexagonal sampling, split partitioning & aggregation
+GDAL GEO source                READY WITH GDAL — native windowed B2/B3/B4/B8 source and strict alignment
+Geo dense outputs              READY WITH GDAL — CRS/full-affine GeoTIFF class, confidence, margin rasters
+Provenance/RIT graph           READY — real JSON/JSONL lineage loaded by the Web explorer
+H3 integration                 READY WITH GDAL + H3 — official cells after source CRS → WGS84 transformation
 Web Job Execution              READY — local asynchronous worker execution on 127.0.0.1
 Application CLI                READY — unified command-line authority (train, classify, evaluate, map, benchmark, web, verify)
 Synthetic TEST                 SEALED / NOT_EVALUATED
