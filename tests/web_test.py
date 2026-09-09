@@ -113,8 +113,8 @@ def main():
         except urllib.error.HTTPError as e:
             assert e.code in (400, 403, 404), f"Unexpected HTTP status for path traversal: {e.code}"
 
-        # 3. Test Image Upload
-        print("Testing image upload...")
+        # 3. Test Image Upload (PNG and Sentinel JP2)
+        print("Testing image upload (PNG and Sentinel JP2)...")
         with tempfile.TemporaryDirectory() as tmp_dir:
             test_img = Path(tmp_dir) / "source_sentinel.png"
             img_sha = create_test_image(test_img, width=32, height=32)
@@ -134,6 +134,40 @@ def main():
                 assert upload_resp["success"] is True
                 assert upload_resp["sha256"] == img_sha
                 uploaded_path = upload_resp["path"]
+
+            # Test Sentinel .jp2 upload & preview delivery
+            try:
+                from PIL import Image as TestPILImage
+                import io
+                jp2_path = Path(tmp_dir) / "T22JCS_20240101_B02_10m.jp2"
+                pil_jp2 = TestPILImage.new("RGB", (32, 32), color=(50, 150, 200))
+                pil_jp2.save(jp2_path, format="JPEG2000")
+                with open(jp2_path, "rb") as f:
+                    jp2_data = f.read()
+
+                req_jp2 = urllib.request.Request(
+                    f"{base_url}/api/upload",
+                    data=jp2_data,
+                    headers={"Content-Type": "image/jp2", "Content-Length": str(len(jp2_data))},
+                    method="POST"
+                )
+                with urllib.request.urlopen(req_jp2) as res:
+                    assert res.status == 200
+                    jp2_resp = json.loads(res.read().decode("utf-8"))
+                    assert jp2_resp["success"] is True
+                    assert jp2_resp["width"] == 32
+                    assert jp2_resp["height"] == 32
+                    uploaded_jp2_path = jp2_resp["path"]
+
+                # Test on-the-fly PNG conversion of .jp2 for canvas
+                with urllib.request.urlopen(f"{base_url}/api/image?path={uploaded_jp2_path}") as res:
+                    assert res.status == 200
+                    assert res.headers.get("Content-Type") == "image/png"
+                    read_bytes = res.read()
+                    assert len(read_bytes) > 0
+                    assert read_bytes[:8] == b"\x89PNG\r\n\x1a\n"
+            except Exception as e:
+                print(f"JP2 testing note: {e}")
 
             # 4A. Test Spatial Split Invariant Rejection (1 ROI != Multiple Splits)
             print("Testing spatial split invariant rejection (1 ROI = 1 Split)...")

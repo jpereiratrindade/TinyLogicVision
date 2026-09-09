@@ -98,11 +98,38 @@ def save_png_patch(pixels_rgb: bytes, width: int, height: int, output_path: Path
 
 
 def load_image_dimensions_and_rgb(image_path: Path):
-    """Returns (width, height, raw_rgb_bytes)"""
+    """Returns (width, height, raw_rgb_bytes) with support for PNG, JPEG, JP2 (JPEG2000), and GeoTIFF."""
     if HAS_PIL:
-        with PILImage.open(image_path) as img:
-            rgb_img = img.convert("RGB")
-            return rgb_img.width, rgb_img.height, rgb_img.tobytes()
+        try:
+            with PILImage.open(image_path) as img:
+                w, h = img.size
+                if img.mode == "RGB":
+                    return w, h, img.tobytes()
+                elif img.mode in ("I;16", "I", "L", "F", "1"):
+                    import numpy as np
+                    arr = np.array(img, dtype=np.float32)
+                    val_max = float(arr.max()) if arr.size > 0 else 1.0
+                    scale = 255.0 / max(val_max, 3500.0) if val_max > 255 else 1.0
+                    arr_8u = np.clip(arr * scale, 0, 255).astype(np.uint8)
+                    rgb_arr = np.dstack([arr_8u, arr_8u, arr_8u])
+                    return w, h, rgb_arr.tobytes()
+                else:
+                    rgb_img = img.convert("RGB")
+                    return w, h, rgb_img.tobytes()
+        except Exception:
+            pass
+
+    # Try GDAL via gdal_translate to /vsistdout/ if PIL failed or is missing
+    try:
+        import io
+        cmd = ["gdal_translate", "-of", "PNG", "-q", str(image_path), "/vsistdout/"]
+        proc = subprocess.run(cmd, capture_output=True)
+        if proc.returncode == 0 and len(proc.stdout) > 24 and HAS_PIL:
+            with PILImage.open(io.BytesIO(proc.stdout)) as p_img:
+                rgb = p_img.convert("RGB")
+                return rgb.width, rgb.height, rgb.tobytes()
+    except Exception:
+        pass
 
     # Fallback to loading via Python's standard libraries or basic headers
     with open(image_path, "rb") as f:
@@ -112,7 +139,6 @@ def load_image_dimensions_and_rgb(image_path: Path):
     if data.startswith(b"\x89PNG\r\n\x1a\n") and len(data) >= 24:
         import struct
         w, h = struct.unpack(">II", data[16:24])
-        # Return dummy or basic RGB if PIL is missing
         return w, h, None
 
     return 0, 0, None
@@ -225,7 +251,7 @@ class TinyVisionRequestHandler(http.server.BaseHTTPRequestHandler):
     def handle_api_status(self):
         uploads = []
         for p in sorted(UPLOADS_DIR.glob("*")):
-            if p.is_file() and p.suffix.lower() in (".png", ".jpg", ".jpeg"):
+            if p.is_file() and p.suffix.lower() in (".png", ".jpg", ".jpeg", ".jp2", ".j2k", ".tif", ".tiff"):
                 w, h, _ = load_image_dimensions_and_rgb(p)
                 uploads.append({
                     "name": p.name,
@@ -261,8 +287,31 @@ class TinyVisionRequestHandler(http.server.BaseHTTPRequestHandler):
             self.send_error_json("Image not found", 404)
             return
         ext = p.suffix.lower()
-        mime = "image/png" if ext == ".png" else "image/jpeg"
-        self.serve_file(p, mime)
+        if ext == ".png":
+            self.serve_file(p, "image/png")
+        elif ext in (".jpg", ".jpeg"):
+            self.serve_file(p, "image/jpeg")
+        elif ext in (".jp2", ".j2k", ".tif", ".tiff"):
+            # Convert to PNG on-the-fly for browser canvas display
+            w, h, rgb_bytes = load_image_dimensions_and_rgb(p)
+            if rgb_bytes and HAS_PIL:
+                try:
+                    import io
+                    out_img = PILImage.frombytes("RGB", (w, h), rgb_bytes)
+                    buf = io.BytesIO()
+                    out_img.save(buf, format="PNG")
+                    png_bytes = buf.getvalue()
+                    self.send_response(200)
+                    self.send_header("Content-Type", "image/png")
+                    self.send_header("Content-Length", str(len(png_bytes)))
+                    self.end_headers()
+                    self.wfile.write(png_bytes)
+                    return
+                except Exception:
+                    pass
+            self.serve_file(p, "image/png")
+        else:
+            self.serve_file(p, "application/octet-stream")
 
     def handle_api_upload(self):
         content_type = self.headers.get("Content-Type", "")
@@ -298,7 +347,7 @@ class TinyVisionRequestHandler(http.server.BaseHTTPRequestHandler):
             filename = "upload.png"
 
         ext = Path(filename).suffix.lower()
-        if ext not in (".png", ".jpg", ".jpeg"):
+        if ext not in (".png", ".jpg", ".jpeg", ".jp2", ".j2k", ".tif", ".tiff"):
             ext = ".png"
 
         sha = compute_sha256(file_data)

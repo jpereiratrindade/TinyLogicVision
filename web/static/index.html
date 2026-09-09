@@ -81,15 +81,15 @@
 
             <!-- Upload Zone -->
             <div class="upload-zone" id="drop-zone">
-              <input type="file" id="image-file-input" accept="image/png,image/jpeg,image/jpg,image/tiff,.tif,.tiff" hidden>
+              <input type="file" id="image-file-input" accept="image/png,image/jpeg,image/jpg,image/tiff,.tif,.tiff,.jp2,.j2k,image/jp2" hidden>
               <div class="upload-prompt">
                 <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
                   <polyline points="17 8 12 3 7 8"></polyline>
                   <line x1="12" y1="3" x2="12" y2="15"></line>
                 </svg>
-                <span id="upload-prompt-text">Carregar Imagem ou Cena Sentinel-2</span>
-                <small>PNG, JPEG, GeoTIFF ou produto multicanal</small>
+                <span id="upload-prompt-text">Carregar Imagem, GeoTIFF ou Sentinel-2 (.jp2)</span>
+                <small>PNG, JPEG, GeoTIFF (.tif) ou Sentinel-2 JPEG2000 (.jp2)</small>
               </div>
             </div>
 
@@ -429,7 +429,7 @@
             <label>Imagem / Cena Fonte:</label>
             <div class="flex-row-gap">
               <select id="dense-select-image" class="input-select"></select>
-              <input type="file" id="dense-file-input" accept="image/png,image/jpeg,image/tiff,.tif,.tiff" hidden>
+              <input type="file" id="dense-file-input" accept="image/png,image/jpeg,image/tiff,.tif,.tiff,.jp2,.j2k,image/jp2" hidden>
               <button id="btn-dense-upload" class="btn btn-sm btn-outline">📂 Carregar</button>
             </div>
           </div>
@@ -630,7 +630,7 @@
 
           <div class="form-row">
             <label>Amostra para Classificação:</label>
-            <input type="file" id="classify-image-file" accept="image/png,image/jpeg,.tvp" class="input-file">
+            <input type="file" id="classify-image-file" accept="image/png,image/jpeg,.tvp,.jp2,.j2k,.tif" class="input-file">
           </div>
 
           <button id="btn-run-classify" class="btn btn-primary">🔍 Classificar</button>

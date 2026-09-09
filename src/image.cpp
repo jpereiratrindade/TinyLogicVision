@@ -118,12 +118,68 @@ RgbImage load_jpeg(const std::filesystem::path& path) {
     return image;
 }
 
+RgbImage load_png_from_bytes(const void* data, std::size_t size) {
+    png_image png{};
+    png.version = PNG_IMAGE_VERSION;
+    if (png_image_begin_read_from_memory(&png, data, size) == 0) {
+        throw std::runtime_error("cannot read PNG from memory: " + std::string(png.message));
+    }
+    png.format = PNG_FORMAT_RGB;
+
+    RgbImage image;
+    image.width = png.width;
+    image.height = png.height;
+    image.pixels.resize(PNG_IMAGE_SIZE(png));
+    if (png_image_finish_read(&png, nullptr, image.pixels.data(), 0, nullptr) == 0) {
+        const std::string message = png.message;
+        png_image_free(&png);
+        throw std::runtime_error("cannot decode PNG from memory: " + message);
+    }
+    png_image_free(&png);
+    return image;
+}
+
+RgbImage load_jp2_or_gdal(const std::filesystem::path& path) {
+    std::string cmd = "gdal_translate -of PNG -q \"" + path.string() + "\" /vsistdout/ 2>/dev/null";
+    std::FILE* pipe = popen(cmd.c_str(), "r");
+    if (pipe) {
+        std::vector<std::uint8_t> buffer;
+        std::uint8_t chunk[4096];
+        while (std::size_t bytes = std::fread(chunk, 1, sizeof(chunk), pipe)) {
+            buffer.insert(buffer.end(), chunk, chunk + bytes);
+        }
+        int status = pclose(pipe);
+        if (status == 0 && buffer.size() > 24) {
+            return load_png_from_bytes(buffer.data(), buffer.size());
+        }
+    }
+
+    std::string cmd_convert = "convert \"" + path.string() + "\" png:- 2>/dev/null";
+    std::FILE* pipe_conv = popen(cmd_convert.c_str(), "r");
+    if (pipe_conv) {
+        std::vector<std::uint8_t> buffer;
+        std::uint8_t chunk[4096];
+        while (std::size_t bytes = std::fread(chunk, 1, sizeof(chunk), pipe_conv)) {
+            buffer.insert(buffer.end(), chunk, chunk + bytes);
+        }
+        int status_conv = pclose(pipe_conv);
+        if (status_conv == 0 && buffer.size() > 24) {
+            return load_png_from_bytes(buffer.data(), buffer.size());
+        }
+    }
+
+    throw std::runtime_error("cannot decode JP2/TIFF image " + path.string() + ": gdal_translate or convert required");
+}
+
 } // namespace
 
 RgbImage load_rgb_image(const std::filesystem::path& path) {
     const auto extension = lowercase_extension(path);
     if (extension == ".png") return load_png(path);
     if (extension == ".jpg" || extension == ".jpeg") return load_jpeg(path);
+    if (extension == ".jp2" || extension == ".j2k" || extension == ".tif" || extension == ".tiff") {
+        return load_jp2_or_gdal(path);
+    }
     throw std::invalid_argument("unsupported image extension: " + path.string());
 }
 
