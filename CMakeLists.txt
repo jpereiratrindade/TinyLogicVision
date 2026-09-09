@@ -21,6 +21,7 @@ add_library(tinyvision_application
     src/image.cpp
     src/application.cpp
     src/dense.cpp
+    src/tensor.cpp
 )
 target_include_directories(tinyvision_application PUBLIC include)
 target_link_libraries(tinyvision_application PUBLIC tinyvision_core PNG::PNG JPEG::JPEG)
@@ -60,6 +61,10 @@ add_test(NAME core_perf_test COMMAND core_perf_test)
 add_executable(schema_model_test tests/schema_model_test.cpp)
 target_link_libraries(schema_model_test PRIVATE tinyvision_application)
 add_test(NAME schema_model_test COMMAND schema_model_test)
+
+add_executable(multichannel_test tests/multichannel_test.cpp)
+target_link_libraries(multichannel_test PRIVATE tinyvision_application)
+add_test(NAME multichannel_test COMMAND multichannel_test)
 
 add_executable(training_test tests/training_test.cpp)
 target_link_libraries(training_test PRIVATE tinyvision_core)
