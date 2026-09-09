@@ -343,30 +343,62 @@ function setupImageLoading() {
   if (btnSelectS2Folder && s2FolderInput) {
     btnSelectS2Folder.addEventListener('click', () => s2FolderInput.click());
     s2FolderInput.addEventListener('change', async (e) => {
-      const files = Array.from(e.target.files);
-      if (files.length === 0) return;
-      btnSelectS2Folder.textContent = 'Enviando arquivos da pasta...';
+      const allFiles = Array.from(e.target.files);
+      if (allFiles.length === 0) return;
+
+      btnSelectS2Folder.textContent = 'Localizando bandas 10m...';
       btnSelectS2Folder.disabled = true;
+
       try {
+        // Filter specifically for 10m bands (B02, B03, B04, B08, TCI) and ignore 20m/60m
+        const isNot20_60 = (f) => !/(20m|60m)/i.test(f.webkitRelativePath || f.name);
+        const b2File = allFiles.find((f) => /(^|[_.-])(B02|B2|B02_10m|B2_10m)\.(jp2|tif|tiff)$/i.test(f.name) && isNot20_60(f));
+        const b3File = allFiles.find((f) => /(^|[_.-])(B03|B3|B03_10m|B3_10m)\.(jp2|tif|tiff)$/i.test(f.name) && isNot20_60(f));
+        const b4File = allFiles.find((f) => /(^|[_.-])(B04|B4|B04_10m|B4_10m)\.(jp2|tif|tiff)$/i.test(f.name) && isNot20_60(f));
+        const b8File = allFiles.find((f) => /(^|[_.-])(B08|B8|B08_10m|B8_10m)\.(jp2|tif|tiff)$/i.test(f.name) && isNot20_60(f));
+        const tciFile = allFiles.find((f) => /(^|[_.-])(TCI|TCI_10m)\.(jp2|tif|tiff)$/i.test(f.name) && isNot20_60(f));
+
+        if (!b2File || !b3File || !b4File || !b8File) {
+          throw new Error('Não foram encontradas todas as 4 bandas de 10m (B02, B03, B04, B08) na pasta selecionada.');
+        }
+
+        btnSelectS2Folder.textContent = 'Enviando 4 bandas 10m...';
         const formData = new FormData();
-        files.forEach((f) => formData.append('files', f, f.name));
+        formData.append('file_b2', b2File, b2File.name);
+        formData.append('file_b3', b3File, b3File.name);
+        formData.append('file_b4', b4File, b4File.name);
+        formData.append('file_b8', b8File, b8File.name);
+        if (tciFile) formData.append('file_tci', tciFile, tciFile.name);
+
         const upRes = await fetch('/api/upload', { method: 'POST', body: formData });
         const upData = await upRes.json();
-        if (!upData.success) throw new Error(upData.error || 'Erro no upload da pasta');
+        if (!upData.success) throw new Error(upData.error || 'Erro no upload das bandas');
 
-        // Automatically open detected bands
-        const sRes = await fetch('/api/sentinel/open', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ folder_path: upData.path ? String(new URL(upData.path, window.location.origin)).replace(/^.*\/uploads\//, '.tinyvision/uploads/') : '.tinyvision/uploads/' }),
-        });
-        const sData = await sRes.json();
-        if (sData.success) {
-          applySentinelDescriptor(sData);
-        } else {
-          // Fallback to first file
-          handleLoadedSource(upData);
+        // Automatically discover from the uploaded band files
+        const savedFiles = upData.files || [upData];
+        const findSaved = (re) => {
+          const m = savedFiles.find((f) => re.test(f.original_name || f.filename));
+          return m ? m.path : null;
+        };
+
+        const p2 = findSaved(/(^|[_.-])(B02|B2|B02_10m|B2_10m)\./i);
+        const p3 = findSaved(/(^|[_.-])(B03|B3|B03_10m|B3_10m)\./i);
+        const p4 = findSaved(/(^|[_.-])(B04|B4|B04_10m|B4_10m)\./i);
+        const p8 = findSaved(/(^|[_.-])(B08|B8|B08_10m|B8_10m)\./i);
+
+        if (p2 && p3 && p4 && p8) {
+          const sRes = await fetch('/api/sentinel/open', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ bands: { b2: p2, b3: p3, b4: p4, b8: p8 } }),
+          });
+          const sData = await sRes.json();
+          if (sData.success) {
+            applySentinelDescriptor(sData);
+            return;
+          }
         }
+        handleLoadedSource(upData);
       } catch (err) {
         alert(`Erro ao abrir pasta Sentinel: ${err.message}`);
       } finally {
@@ -419,7 +451,6 @@ function setupImageLoading() {
       btnLoad4Bands.disabled = true;
       btnLoad4Bands.textContent = 'Carregando 4 bandas...';
       try {
-        // If files selected, upload them first
         const uploadFileIfSelected = async (input, pathInput) => {
           if (input.files && input.files[0]) {
             const fd = new FormData();
@@ -499,6 +530,23 @@ function setupImageLoading() {
     if (file) handleImageUpload(file);
   });
 
+  // Composition mode switcher (True Color / False Color NIR / False Color Green / NDVI)
+  const selectViewComp = document.getElementById('select-view-composition');
+  if (selectViewComp) {
+    selectViewComp.addEventListener('change', (e) => {
+      const mode = e.target.value;
+      if (state.sentinelDescriptor && state.sentinelDescriptor.previews && state.sentinelDescriptor.previews[mode]) {
+        const url = state.sentinelDescriptor.previews[mode];
+        const img = new Image();
+        img.onload = () => {
+          state.currentImage = img;
+          redrawMainCanvas();
+        };
+        img.src = url;
+      }
+    });
+  }
+
   el.chkSentinel10m.addEventListener('change', () => updateSentinelBadges());
   el.denseChkSentinel10m.addEventListener('change', () => updateSentinelBadges());
 }
@@ -538,14 +586,14 @@ function applySentinelDescriptor(data) {
   el.denseChkSentinel10m.checked = true;
   updateSentinelBadges();
 
-  // Load preview into canvas
+  // Load preview into canvas and automatically fit to window
   const img = new Image();
   img.onload = () => {
     state.currentImage = img;
     el.canvasPlaceholder.classList.add('hidden');
     el.canvas.width = img.width;
     el.canvas.height = img.height;
-    resetZoom();
+    fitToScreen();
     redrawMainCanvas();
   };
   img.src = data.preview_url || `/api/image?path=${encodeURIComponent(data.preview_path)}`;
@@ -579,7 +627,7 @@ function handleLoadedSource(data) {
     el.canvasPlaceholder.classList.add('hidden');
     el.canvas.width = img.width;
     el.canvas.height = img.height;
-    resetZoom();
+    fitToScreen();
     redrawMainCanvas();
   };
   img.src = `/api/image?path=${encodeURIComponent(data.path)}`;
@@ -621,10 +669,13 @@ async function handleImageUpload(file) {
   }
 }
 
-// 5. Canvas Interaction & Drawing
+// 5. Canvas Interaction, Pan & Zoom
 function setupCanvasInteraction() {
+  const btnZoomFit = document.getElementById('btn-zoom-fit');
+
   el.btnZoomIn.addEventListener('click', () => setZoom(state.zoom * 1.25));
   el.btnZoomOut.addEventListener('click', () => setZoom(state.zoom / 1.25));
+  if (btnZoomFit) btnZoomFit.addEventListener('click', () => fitToScreen());
   el.btnZoomReset.addEventListener('click', () => resetZoom());
 
   el.chkShowGrid.addEventListener('change', () => redrawMainCanvas());
@@ -637,22 +688,59 @@ function setupCanvasInteraction() {
     redrawMainCanvas();
   });
 
+  let isPanning = false;
+  let panStartX = 0;
+  let panStartY = 0;
+
   const getCanvasCoords = (e) => {
-    const rect = el.canvas.getBoundingClientRect();
-    const scaleX = el.canvas.width / rect.width;
-    const scaleY = el.canvas.height / rect.height;
+    const rect = el.canvasContainer.getBoundingClientRect();
+    const mouseX = e.clientX - rect.left;
+    const mouseY = e.clientY - rect.top;
     return {
-      x: Math.floor((e.clientX - rect.left) * scaleX),
-      y: Math.floor((e.clientY - rect.top) * scaleY),
+      x: Math.floor((mouseX - state.panX) / state.zoom),
+      y: Math.floor((mouseY - state.panY) / state.zoom),
     };
   };
 
-  el.canvas.addEventListener('mousemove', (e) => {
+  el.canvasContainer.addEventListener('contextmenu', (e) => e.preventDefault());
+
+  el.canvasContainer.addEventListener('mousedown', (e) => {
+    if (!state.currentImage) return;
+
+    // Pan with Right Click (button 2) or Middle Click (button 1) or Alt/Space key
+    if (e.button === 1 || e.button === 2 || e.altKey || e.shiftKey) {
+      e.preventDefault();
+      isPanning = true;
+      panStartX = e.clientX - state.panX;
+      panStartY = e.clientY - state.panY;
+      el.canvasContainer.style.cursor = 'grabbing';
+      return;
+    }
+
+    // Left Click: Start drawing ROI if inside canvas
+    if (e.button === 0) {
+      const { x, y } = getCanvasCoords(e);
+      if (x >= 0 && x <= el.canvas.width && y >= 0 && y <= el.canvas.height) {
+        state.isDrawing = true;
+        state.drawStartX = x;
+        state.drawStartY = y;
+        state.currentRect = { x, y, width: 0, height: 0 };
+      }
+    }
+  });
+
+  window.addEventListener('mousemove', (e) => {
+    if (isPanning) {
+      state.panX = e.clientX - panStartX;
+      state.panY = e.clientY - panStartY;
+      applyTransform();
+      return;
+    }
+
     if (!state.currentImage) return;
     const { x, y } = getCanvasCoords(e);
     el.cursorCoords.textContent = `Pixel X: ${x} | Y: ${y}`;
 
-    // Compute simulated metric / geo coords if 10m
     if (el.chkSentinel10m.checked) {
       const easting = 480000 + x * 10;
       const northing = 7820000 - y * 10;
@@ -674,36 +762,73 @@ function setupCanvasInteraction() {
     }
   });
 
-  el.canvas.addEventListener('mousedown', (e) => {
-    if (!state.currentImage || e.button !== 0) return;
-    const { x, y } = getCanvasCoords(e);
-    state.isDrawing = true;
-    state.drawStartX = x;
-    state.drawStartY = y;
-    state.currentRect = { x, y, width: 0, height: 0 };
+  window.addEventListener('mouseup', () => {
+    if (isPanning) {
+      isPanning = false;
+      el.canvasContainer.style.cursor = 'crosshair';
+    }
+    if (state.isDrawing) {
+      state.isDrawing = false;
+      if (state.currentRect && state.currentRect.width >= 8 && state.currentRect.height >= 8) {
+        addRoi(state.currentRect);
+      }
+      state.currentRect = null;
+      redrawMainCanvas();
+    }
   });
 
-  window.addEventListener('mouseup', () => {
-    if (!state.isDrawing) return;
-    state.isDrawing = false;
-    if (state.currentRect && state.currentRect.width >= 8 && state.currentRect.height >= 8) {
-      addRoi(state.currentRect);
-    }
-    state.currentRect = null;
-    redrawMainCanvas();
-  });
+  // Wheel zoom centered on cursor
+  el.canvasContainer.addEventListener('wheel', (e) => {
+    if (!state.currentImage) return;
+    e.preventDefault();
+    const rect = el.canvasContainer.getBoundingClientRect();
+    const mouseX = e.clientX - rect.left;
+    const mouseY = e.clientY - rect.top;
+
+    const zoomFactor = e.deltaY < 0 ? 1.18 : 1 / 1.18;
+    const oldZoom = state.zoom;
+    const newZoom = Math.max(0.05, Math.min(oldZoom * zoomFactor, 16.0));
+
+    state.panX = mouseX - (mouseX - state.panX) * (newZoom / oldZoom);
+    state.panY = mouseY - (mouseY - state.panY) * (newZoom / oldZoom);
+    state.zoom = newZoom;
+    applyTransform();
+  }, { passive: false });
+}
+
+function fitToScreen() {
+  if (!state.currentImage || !el.canvasContainer) return;
+  const cw = el.canvasContainer.clientWidth || 800;
+  const ch = el.canvasContainer.clientHeight || 600;
+  const imgW = el.canvas.width || 1;
+  const imgH = el.canvas.height || 1;
+
+  const scale = Math.min((cw - 32) / imgW, (ch - 32) / imgH);
+  state.zoom = Math.max(0.01, Math.min(scale, 4.0));
+  state.panX = Math.round((cw - imgW * state.zoom) / 2);
+  state.panY = Math.round((ch - imgH * state.zoom) / 2);
+  applyTransform();
 }
 
 function setZoom(newZoom) {
-  state.zoom = Math.max(0.2, Math.min(newZoom, 8.0));
-  el.zoomLevel.textContent = `${Math.round(state.zoom * 100)}%`;
-  el.canvas.style.transform = `scale(${state.zoom})`;
+  state.zoom = Math.max(0.05, Math.min(newZoom, 16.0));
+  applyTransform();
 }
 
 function resetZoom() {
+  if (!state.currentImage || !el.canvasContainer) return;
+  const cw = el.canvasContainer.clientWidth || 800;
+  const ch = el.canvasContainer.clientHeight || 600;
   state.zoom = 1.0;
-  el.zoomLevel.textContent = '100%';
-  el.canvas.style.transform = 'scale(1.0)';
+  state.panX = Math.round((cw - el.canvas.width) / 2);
+  state.panY = Math.round((ch - el.canvas.height) / 2);
+  applyTransform();
+}
+
+function applyTransform() {
+  el.zoomLevel.textContent = `${Math.round(state.zoom * 100)}%`;
+  el.canvas.style.transform = `translate(${state.panX}px, ${state.panY}px) scale(${state.zoom})`;
+  el.canvas.style.transformOrigin = '0 0';
 }
 
 function addRoi(rect) {
@@ -1361,15 +1486,29 @@ async function refreshWorkspaceStatus() {
     updateSelect(el.evalSelectModel, state.models, 'name', 'name');
     updateSelect(el.denseSelectModel, state.models, 'name', 'name');
 
-    // Populate images select
+    // Populate images select for dense mapping
     if (el.denseSelectImage) {
+      const currentVal = el.denseSelectImage.value;
       el.denseSelectImage.innerHTML = '';
+
+      if (state.imagePath) {
+        const activeOpt = document.createElement('option');
+        activeOpt.value = state.imagePath;
+        activeOpt.textContent = `⭐ Cena Ativa no Canvas (${(state.imageMeta && state.imageMeta.filename) || 'Sentinel-2 Multibanda'})`;
+        el.denseSelectImage.appendChild(activeOpt);
+      }
+
       (data.uploads || []).forEach((u) => {
+        if (state.imagePath && u.path === state.imagePath) return;
         const opt = document.createElement('option');
         opt.value = u.path;
         opt.textContent = `${u.name} (${u.width}x${u.height})`;
         el.denseSelectImage.appendChild(opt);
       });
+
+      if (currentVal && Array.from(el.denseSelectImage.options).some(o => o.value === currentVal)) {
+        el.denseSelectImage.value = currentVal;
+      }
     }
 
     if (el.browserDatasetsCount) el.browserDatasetsCount.textContent = state.datasets.length;

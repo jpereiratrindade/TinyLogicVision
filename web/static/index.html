@@ -336,8 +336,18 @@
             <div class="tool-group">
               <button id="btn-zoom-in" class="btn btn-sm btn-icon" title="Zoom +">+</button>
               <button id="btn-zoom-out" class="btn btn-sm btn-icon" title="Zoom -">-</button>
-              <button id="btn-zoom-reset" class="btn btn-sm" title="Reset Zoom">100%</button>
+              <button id="btn-zoom-fit" class="btn btn-sm btn-primary" title="Ajustar Imagem à Tela (Ver Completa)">🔍 Ajustar</button>
+              <button id="btn-zoom-reset" class="btn btn-sm" title="Tamanho Real 1:1">100%</button>
               <span id="zoom-level" class="zoom-text">100%</span>
+            </div>
+            <div class="tool-group" id="group-view-composition">
+              <label class="label-inline" for="select-view-composition">Composição Visual:</label>
+              <select id="select-view-composition" class="input-select input-select-sm">
+                <option value="true_color">Cor Verdadeira (B4, B3, B2 / TCI)</option>
+                <option value="false_color_nir">Falsa Cor NIR (B8, B4, B3 - Vegetação Vermelha)</option>
+                <option value="false_color_green">Falsa Cor Verde (B4, B8, B2 - Vegetação Verde)</option>
+                <option value="ndvi">Índice de Vegetação (NDVI)</option>
+              </select>
             </div>
             <div class="tool-group">
               <label class="checkbox-inline">
@@ -366,6 +376,7 @@
           <div class="canvas-footer-info">
             <span id="cursor-coords">Pixel X: - | Y: -</span>
             <span id="cursor-geo-coords" class="text-cyan">Geo: -</span>
+            <span id="canvas-pan-hint" class="text-dim">Dica: Arraste com o botão direito/meio ou use a roda do mouse para zoom fluido</span>
             <span id="canvas-patch-info">Patches selecionados: 0</span>
           </div>
         </div>

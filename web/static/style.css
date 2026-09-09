@@ -540,6 +540,7 @@ body {
   background: #020617;
   overflow: hidden;
   cursor: crosshair;
+  user-select: none;
 }
 
 #main-canvas {
@@ -547,6 +548,14 @@ body {
   top: 0;
   left: 0;
   image-rendering: pixelated;
+  transform-origin: 0 0;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+}
+
+.input-select-sm {
+  padding: 4px 8px;
+  font-size: 11px;
+  height: 28px;
 }
 
 .canvas-empty-state {

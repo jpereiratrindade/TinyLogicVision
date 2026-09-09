@@ -25,6 +25,8 @@ int main() {
     std::cout << "Running sentinel_test...\n";
 
     const auto tmp_dir = std::filesystem::temp_directory_path() / "tv_sentinel_test";
+    std::error_code ec_init;
+    std::filesystem::remove_all(tmp_dir, ec_init);
     std::filesystem::create_directories(tmp_dir);
 
     // 1. Create dummy SAFE product structure

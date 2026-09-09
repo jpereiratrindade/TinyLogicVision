@@ -46,6 +46,14 @@ Sentinel2Product Sentinel2Product::discover_from_safe(const std::filesystem::pat
     for (const auto& entry : std::filesystem::recursive_directory_iterator(safe_directory)) {
         if (entry.is_regular_file()) {
             const std::string fn = entry.path().filename().string();
+            const std::string path_str = entry.path().string();
+
+            // Exclude 20m and 60m bands
+            if (path_str.find("R20m") != std::string::npos || path_str.find("R60m") != std::string::npos ||
+                fn.find("20m") != std::string::npos || fn.find("60m") != std::string::npos) {
+                continue;
+            }
+
             if (std::regex_search(fn, b2_re)) b2_matches.push_back(entry.path());
             else if (std::regex_search(fn, b3_re)) b3_matches.push_back(entry.path());
             else if (std::regex_search(fn, b4_re)) b4_matches.push_back(entry.path());
@@ -54,7 +62,7 @@ Sentinel2Product Sentinel2Product::discover_from_safe(const std::filesystem::pat
     }
 
     if (b2_matches.empty() || b3_matches.empty() || b4_matches.empty() || b8_matches.empty()) {
-        throw std::invalid_argument("missing required 10m Sentinel-2 bands in SAFE product");
+        throw std::invalid_argument("missing required 10m Sentinel-2 bands (B02, B03, B04, B08) in SAFE product");
     }
     if (b2_matches.size() > 1 || b3_matches.size() > 1 || b4_matches.size() > 1 || b8_matches.size() > 1) {
         throw std::invalid_argument("ambiguous multiple matches for 10m Sentinel-2 bands in SAFE product");

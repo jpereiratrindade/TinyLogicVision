@@ -1328,11 +1328,16 @@ class TinyVisionRequestHandler(http.server.BaseHTTPRequestHandler):
         b3_re = re.compile(r"(^|[_.-])(B03|B3|B03_10m|B3_10m)\.(jp2|tif|tiff)$", re.IGNORECASE)
         b4_re = re.compile(r"(^|[_.-])(B04|B4|B04_10m|B4_10m)\.(jp2|tif|tiff)$", re.IGNORECASE)
         b8_re = re.compile(r"(^|[_.-])(B08|B8|B08_10m|B8_10m)\.(jp2|tif|tiff)$", re.IGNORECASE)
+        tci_re = re.compile(r"(^|[_.-])(TCI|TCI_10m)\.(jp2|tif|tiff)$", re.IGNORECASE)
 
-        b2_matches, b3_matches, b4_matches, b8_matches = [], [], [], []
+        b2_matches, b3_matches, b4_matches, b8_matches, tci_matches = [], [], [], [], []
         for root, _, files in os.walk(directory):
             for f in files:
                 fp = Path(root) / f
+                p_str = str(fp)
+                if "R20m" in p_str or "R60m" in p_str or "20m" in f or "60m" in f:
+                    continue
+
                 if b2_re.search(f):
                     b2_matches.append(fp)
                 elif b3_re.search(f):
@@ -1341,6 +1346,8 @@ class TinyVisionRequestHandler(http.server.BaseHTTPRequestHandler):
                     b4_matches.append(fp)
                 elif b8_re.search(f):
                     b8_matches.append(fp)
+                elif tci_re.search(f):
+                    tci_matches.append(fp)
 
         if not (b2_matches and b3_matches and b4_matches and b8_matches):
             missing = []
@@ -1351,17 +1358,18 @@ class TinyVisionRequestHandler(http.server.BaseHTTPRequestHandler):
             self.send_error_json(f"Bandas 10m não encontradas na pasta: {', '.join(missing)}", 400)
             return
 
-        self.process_sentinel_band_set(b2_matches[0], b3_matches[0], b4_matches[0], b8_matches[0])
+        tci_path = tci_matches[0] if tci_matches else None
+        self.process_sentinel_band_set(b2_matches[0], b3_matches[0], b4_matches[0], b8_matches[0], tci_path)
 
-    def process_sentinel_band_set(self, b2_path: Path, b3_path: Path, b4_path: Path, b8_path: Path):
+    def process_sentinel_band_set(self, b2_path: Path, b3_path: Path, b4_path: Path, b8_path: Path, tci_path: Path = None):
         try:
             import numpy as np
             preview_max_dim = 2048
 
-            w4, h4, arr4, pw4, ph4 = read_band_2d(b4_path, max_dim=preview_max_dim)
-            w3, h3, arr3, pw3, ph3 = read_band_2d(b3_path, max_dim=preview_max_dim)
-            w2, h2, arr2, pw2, ph2 = read_band_2d(b2_path, max_dim=preview_max_dim)
-            w8, h8, arr8, pw8, ph8 = read_band_2d(b8_path, max_dim=preview_max_dim)
+            w4, h4, arr4, pw, ph = read_band_2d(b4_path, max_dim=preview_max_dim)
+            w3, h3, arr3, _, _ = read_band_2d(b3_path, max_dim=preview_max_dim)
+            w2, h2, arr2, _, _ = read_band_2d(b2_path, max_dim=preview_max_dim)
+            w8, h8, arr8, _, _ = read_band_2d(b8_path, max_dim=preview_max_dim)
 
             if arr4 is None or arr3 is None or arr2 is None or arr8 is None:
                 self.send_error_json("Falha ao decodificar matrizes raster das bandas Sentinel-2.", 500)
@@ -1372,24 +1380,73 @@ class TinyVisionRequestHandler(http.server.BaseHTTPRequestHandler):
                 self.send_error_json(f"Dimensões incompatíveis entre bandas Sentinel: B4=({w}x{h}), B3=({w3}x{h3}), B2=({w2}x{h2}), B8=({w8}x{h8})", 400)
                 return
 
-            pw, ph = pw4, ph4
-            p_max = max(float(np.percentile(arr4, 98)), float(np.percentile(arr3, 98)), float(np.percentile(arr2, 98)), 2000.0)
-            scale = 255.0 / max(p_max, 1.0)
-
-            r = np.clip(arr4 * scale, 0, 255).astype(np.uint8)
-            g = np.clip(arr3 * scale, 0, 255).astype(np.uint8)
-            b = np.clip(arr2 * scale, 0, 255).astype(np.uint8)
-
-            rgb_composite = np.dstack([r, g, b])
             prev_hash = compute_sha256(f"{b2_path}_{b3_path}_{b4_path}_{b8_path}".encode("utf-8"))[:12]
-            preview_filename = f"s2_composite_{prev_hash}.png"
-            preview_path = UPLOADS_DIR / preview_filename
 
-            if HAS_PIL:
-                preview_img = PILImage.fromarray(rgb_composite, 'RGB')
-                preview_img.save(preview_path, format="PNG")
+            # 1. True Color Preview (B4, B3, B2 or TCI)
+            if tci_path and tci_path.is_file():
+                # Read TCI directly
+                _, _, tci_arr, _, _ = read_band_2d(tci_path, max_dim=preview_max_dim)
+                if tci_arr is not None and tci_arr.ndim == 3:
+                    tc_img = PILImage.fromarray(np.clip(tci_arr, 0, 255).astype(np.uint8), "RGB") if HAS_PIL else None
+                else:
+                    tc_img = None
             else:
-                save_png_patch(rgb_composite.tobytes(), pw, ph, preview_path)
+                tc_img = None
+
+            if tc_img is None:
+                p_max = max(float(np.percentile(arr4, 98)), float(np.percentile(arr3, 98)), float(np.percentile(arr2, 98)), 2000.0)
+                scale = 255.0 / max(p_max, 1.0)
+                r = np.clip(arr4 * scale, 0, 255).astype(np.uint8)
+                g = np.clip(arr3 * scale, 0, 255).astype(np.uint8)
+                b = np.clip(arr2 * scale, 0, 255).astype(np.uint8)
+                tc_composite = np.dstack([r, g, b])
+                tc_img = PILImage.fromarray(tc_composite, 'RGB') if HAS_PIL else None
+
+            preview_tc_path = UPLOADS_DIR / f"s2_tc_{prev_hash}.png"
+            if tc_img and HAS_PIL:
+                tc_img.save(preview_tc_path, format="PNG")
+            else:
+                save_png_patch(tc_composite.tobytes() if 'tc_composite' in locals() else b'', pw, ph, preview_tc_path)
+
+            # 2. False Color NIR (B8, B4, B3 - Near Infrared / Vegetation in red)
+            p8_max = max(float(np.percentile(arr8, 98)), float(np.percentile(arr4, 98)), float(np.percentile(arr3, 98)), 2500.0)
+            scale_fc = 255.0 / max(p8_max, 1.0)
+            fc_r = np.clip(arr8 * scale_fc, 0, 255).astype(np.uint8)
+            fc_g = np.clip(arr4 * scale_fc, 0, 255).astype(np.uint8)
+            fc_b = np.clip(arr3 * scale_fc, 0, 255).astype(np.uint8)
+            fc_composite = np.dstack([fc_r, fc_g, fc_b])
+            preview_fc_path = UPLOADS_DIR / f"s2_fc_nir_{prev_hash}.png"
+            if HAS_PIL:
+                PILImage.fromarray(fc_composite, 'RGB').save(preview_fc_path, format="PNG")
+            else:
+                save_png_patch(fc_composite.tobytes(), pw, ph, preview_fc_path)
+
+            # 3. False Color Green (B4, B8, B2 - Vegetation in vivid green)
+            fc_g_r = np.clip(arr4 * scale_fc, 0, 255).astype(np.uint8)
+            fc_g_g = np.clip(arr8 * scale_fc, 0, 255).astype(np.uint8)
+            fc_g_b = np.clip(arr2 * scale_fc, 0, 255).astype(np.uint8)
+            fc_g_composite = np.dstack([fc_g_r, fc_g_g, fc_g_b])
+            preview_fc_green_path = UPLOADS_DIR / f"s2_fc_green_{prev_hash}.png"
+            if HAS_PIL:
+                PILImage.fromarray(fc_g_composite, 'RGB').save(preview_fc_green_path, format="PNG")
+            else:
+                save_png_patch(fc_g_composite.tobytes(), pw, ph, preview_fc_green_path)
+
+            # 4. NDVI ((B8 - B4) / (B8 + B4))
+            denom = arr8 + arr4
+            denom[denom == 0] = 1.0
+            ndvi = (arr8 - arr4) / denom
+            # Map -0.2..0.8 to RGB colormap (brown to yellow to deep green)
+            ndvi_norm = np.clip((ndvi + 0.2) / 1.0, 0.0, 1.0)
+            ndvi_r = (255 * (1.0 - ndvi_norm * 0.8)).astype(np.uint8)
+            ndvi_g = (255 * (ndvi_norm * 0.9 + 0.1)).astype(np.uint8)
+            ndvi_b = (50 * (1.0 - ndvi_norm)).astype(np.uint8)
+            ndvi_composite = np.dstack([ndvi_r, ndvi_g, ndvi_b])
+            preview_ndvi_path = UPLOADS_DIR / f"s2_ndvi_{prev_hash}.png"
+            if HAS_PIL:
+                PILImage.fromarray(ndvi_composite, 'RGB').save(preview_ndvi_path, format="PNG")
+            else:
+                save_png_patch(ndvi_composite.tobytes(), pw, ph, preview_ndvi_path)
 
             crs_desc = "EPSG:32722 (WGS 84 / UTM 22S) [Sentinel-2 10m]"
             geo_transform = [480000.0, 10.0, 0.0, 7820000.0, 0.0, -10.0]
@@ -1414,14 +1471,21 @@ class TinyVisionRequestHandler(http.server.BaseHTTPRequestHandler):
                 "height": h,
                 "preview_width": pw,
                 "preview_height": ph,
-                "preview_path": str(preview_path),
-                "preview_url": f"/api/image?path={preview_path}",
+                "preview_path": str(preview_tc_path),
+                "preview_url": f"/api/image?path={preview_tc_path}",
+                "previews": {
+                    "true_color": f"/api/image?path={preview_tc_path}",
+                    "false_color_nir": f"/api/image?path={preview_fc_path}",
+                    "false_color_green": f"/api/image?path={preview_fc_green_path}",
+                    "ndvi": f"/api/image?path={preview_ndvi_path}",
+                },
                 "bands": {
                     "b2": {"path": str(b2_path), "filename": b2_path.name, "size_bytes": b2_path.stat().st_size},
                     "b3": {"path": str(b3_path), "filename": b3_path.name, "size_bytes": b3_path.stat().st_size},
                     "b4": {"path": str(b4_path), "filename": b4_path.name, "size_bytes": b4_path.stat().st_size},
                     "b8": {"path": str(b8_path), "filename": b8_path.name, "size_bytes": b8_path.stat().st_size},
                 },
+                "tci_path": str(tci_path) if tci_path else None,
                 "crs": crs_desc,
                 "geotransform": geo_transform,
                 "pixel_size_m": 10.0,
