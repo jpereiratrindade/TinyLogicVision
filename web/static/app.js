@@ -49,6 +49,7 @@ const el = {
   datasetNameInput: document.getElementById('dataset-name-input'),
   summaryTableBody: document.getElementById('summary-table-body'),
   datasetWarnings: document.getElementById('dataset-warnings'),
+  btnAutoSplit: document.getElementById('btn-auto-split'),
   btnGenerateDataset: document.getElementById('btn-generate-dataset'),
   canvas: document.getElementById('main-canvas'),
   canvasContainer: document.getElementById('canvas-container'),
@@ -460,23 +461,32 @@ function updateSummaryTable() {
   let tableHtml = '';
   let warnings = [];
   let totalAll = 0;
+  let completeClasses = 0;
 
   rows.forEach(([clsName, splits]) => {
     const total = splits.train + splits.dev + splits.probe;
     totalAll += total;
 
     if (total === 0) {
-      warnings.push(`Classe <strong>${clsName}</strong> sem nenhum patch.`);
-    } else if (splits.train === 0) {
-      warnings.push(`Classe <strong>${clsName}</strong> sem patches em TRAIN.`);
+      warnings.push(`⚠️ Classe <strong>${clsName}</strong> sem nenhum patch.`);
+    } else {
+      if (splits.train === 0) {
+        warnings.push(`⚠️ Classe <strong>${clsName}</strong> sem patches em <strong>TRAIN</strong>.`);
+      }
+      if (splits.dev === 0) {
+        warnings.push(`⚠️ Classe <strong>${clsName}</strong> sem patches em <strong>DEV</strong> (obrigatório para treinamento).`);
+      }
+      if (splits.train > 0 && splits.dev > 0) {
+        completeClasses += 1;
+      }
     }
 
     tableHtml += `
       <tr>
         <td><strong>${clsName}</strong></td>
-        <td>${splits.train}</td>
-        <td>${splits.dev}</td>
-        <td>${splits.probe}</td>
+        <td><span style="color: ${splits.train > 0 ? '#34d399' : '#fb7185'}">${splits.train}</span></td>
+        <td><span style="color: ${splits.dev > 0 ? '#34d399' : '#fb7185'}">${splits.dev}</span></td>
+        <td><span>${splits.probe}</span></td>
         <td><strong>${total}</strong></td>
       </tr>
     `;
@@ -484,6 +494,10 @@ function updateSummaryTable() {
 
   el.summaryTableBody.innerHTML = tableHtml;
   el.btnGenerateDataset.disabled = totalAll === 0;
+
+  if (completeClasses < 2 && totalAll > 0) {
+    warnings.unshift(`❌ <strong>Requisito de Treinamento:</strong> É necessário ter pelo menos 2 classes com amostras em <strong>TRAIN</strong> e em <strong>DEV</strong>. Use o botão <em>Distribuir Splits</em> abaixo se marcou tudo como TRAIN.`);
+  }
 
   if (warnings.length > 0) {
     el.datasetWarnings.innerHTML = warnings.join('<br>');
@@ -494,7 +508,41 @@ function updateSummaryTable() {
 }
 
 function setupDatasetGeneration() {
+  if (el.btnAutoSplit) {
+    el.btnAutoSplit.addEventListener('click', () => {
+      if (state.patches.length === 0) {
+        alert('Nenhum patch disponível para distribuir. Marque ROIs na imagem primeiro.');
+        return;
+      }
+
+      // Group patches by class
+      const byClass = {};
+      state.patches.forEach((p) => {
+        if (!byClass[p.class]) byClass[p.class] = [];
+        byClass[p.class].push(p);
+      });
+
+      Object.values(byClass).forEach((clsPatches) => {
+        const total = clsPatches.length;
+        if (total === 1) {
+          clsPatches[0].split = 'train';
+        } else {
+          // Put roughly 20% in dev (at least 1), remaining in train
+          const devCount = Math.max(1, Math.floor(total * 0.2));
+          const trainCount = total - devCount;
+          clsPatches.forEach((p, idx) => {
+            p.split = idx < trainCount ? 'train' : 'dev';
+          });
+        }
+      });
+
+      updateSummaryTable();
+      redrawCanvas();
+    });
+  }
+
   el.btnGenerateDataset.addEventListener('click', async () => {
+
     const rawName = el.datasetNameInput.value.trim() || `dataset_${Date.now()}`;
     const datasetName = rawName.replace(/[^a-zA-Z0-9_-]/g, '_');
 

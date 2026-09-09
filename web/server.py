@@ -457,12 +457,21 @@ class TinyVisionRequestHandler(http.server.BaseHTTPRequestHandler):
             model_filename = model_name
 
         dataset_dir = DATASETS_DIR / dataset_name
-        if not dataset_dir.is_dir() or not (dataset_dir / "train").is_dir():
-            self.send_error_json(f"Dataset '{dataset_name}' not found or missing train split", 400)
+        if not dataset_dir.is_dir():
+            self.send_error_json(f"Dataset '{dataset_name}' não encontrado em .tinyvision/datasets/", 400)
+            return
+
+        if not (dataset_dir / "train").is_dir():
+            self.send_error_json(f"Dataset '{dataset_name}' não possui o split 'train/'.", 400)
+            return
+
+        if not (dataset_dir / "dev").is_dir():
+            self.send_error_json(f"Dataset '{dataset_name}' não possui o split 'dev/'. O treinamento do TinyLogicVision exige amostras em 'train/' e 'dev/' para monitorar a generalização.", 400)
             return
 
         model_path = MODELS_DIR / model_filename
         cli_bin = REPO_ROOT / "bin" / "tinyvision"
+
 
         run_id = f"run_{int(time.time())}_{dataset_name}"
         run_log_path = RUNS_DIR / f"{run_id}.log"
