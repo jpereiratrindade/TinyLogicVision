@@ -75,6 +75,7 @@ run_test "TV-01A test" generalization_observatory_test
 run_test "TV-01B test" spatial_coverage_experiment_test
 run_test "TV-APP-00 test" application_pipeline_test
 run_test "CLI test" cli_test
+run_test "Web GUI test" web_test
 
 run_witness "TV-00 witness" "${verify_build}/tinyvision" \
     "epoch=180 loss=0.000400 accuracy=100.000000%" \

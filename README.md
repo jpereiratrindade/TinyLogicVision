@@ -15,8 +15,27 @@ can now train and apply the same tiny MLP to labeled PNG/JPEG patches.
 | TV-01C | Sealed synthetic TEST | NOT EXECUTED |
 | TV-APP-00 | Real RGB application pipeline | READY — natural-image probe not executed |
 | Application CLI | Canonical v0.1 CLI interface | READY |
+| Local Web GUI | Dataset authoring, patch extraction & UI workflow | READY |
 
 ## Quick start
+
+### 1. Local Web Application (Recommended)
+
+Launch the self-contained local web interface at `127.0.0.1`:
+
+```bash
+./bin/tinyvision web
+```
+
+The interactive workflow guides you through:
+1. **Abrir Imagem**: Carregue PNG/JPEG local (com indicação se a fonte possui pixels Sentinel-2 nativos de 10 m ou imagem de exibição);
+2. **Definir Classes**: Crie classes rotuladas com cores personalizadas (ou use o preset Sentinel);
+3. **Marcar Regiões (ROIs)**: Desenhe áreas de interesse no canvas e atribua splits (`TRAIN`, `DEV`, `PROBE`);
+4. **Gerar Patches 8x8**: Extraia patches exatos de 8x8 pixels sem interpolação com manifesto de proveniência (`manifest.csv` e `dataset.json`);
+5. **Treinar**: Execute o treinamento canônico C++ (`./bin/tinyvision train`) com métricas em tempo real;
+6. **Classificar & Avaliar**: Classifique novas imagens e avalie splits mantendo o `PROBE` isolado.
+
+### 2. Linha de Comando (CLI)
 
 Build the release binaries, train, classify, evaluate, and verify via the canonical `./bin/tinyvision` CLI:
 
@@ -47,9 +66,10 @@ After cloning, run the complete project and synthetic baseline verification with
 # or: ./scripts/verify.sh
 ```
 
-The command configures and builds the Release/Ninja tree, runs all six test suites
-(including the CLI test suite), and checks the TV-00, TV-01A, TV-01B, and TV-APP-00
+The command configures and builds the Release/Ninja tree, runs all seven test suites
+(including the CLI and Web test suites), and checks the TV-00, TV-01A, TV-01B, and TV-APP-00
 engineering witnesses. It does not evaluate synthetic TEST or a natural-image application probe.
+
 
 The equivalent manual build commands are:
 

@@ -66,3 +66,4 @@ target_link_libraries(application_pipeline_test PRIVATE tinyvision_application)
 add_test(NAME application_pipeline_test COMMAND application_pipeline_test)
 
 add_test(NAME cli_test COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/tests/cli_test.sh")
+add_test(NAME web_test COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/tests/web_test.py")

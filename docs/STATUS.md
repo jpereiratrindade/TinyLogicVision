@@ -7,6 +7,9 @@ experimental evidence    cd0a591 — TV-01B spatial-coverage result
 consolidated baseline    TV-READY-01 — commit containing this document
 application surface     TV-APP-00 — infrastructure and protocol implemented
 application CLI          v0.1 READY — canonical CLI entry point and test suite
+Local Web GUI            READY — 127.0.0.1 browser application for patch authoring and workflow
+Dataset authoring        READY — manifest.csv, dataset.json, and spatial ROI management
+Patch extraction         READY — exact 8x8 source pixel sampling with stride 8
 NATURAL APP PROBE        NOT_EVALUATED
 sealed TEST              NOT_EVALUATED
 ```
@@ -30,7 +33,12 @@ sealed TEST              NOT_EVALUATED
   held-out fixture split;
 - a canonical application CLI entry point (`./bin/tinyvision`) orchestrating
   training, classification, evaluation, and verification with full path independence
-  and CLI test coverage.
+  and CLI test coverage;
+- a local Web GUI (`./bin/tinyvision web`) executing on `127.0.0.1` enabling interactive
+  image inspection, Sentinel 10m vs display resolution tagging, ROI annotation, exact
+  8x8 patch extraction with provenance manifest generation, and integrated training,
+  classification, and split evaluation without modifying core ML mechanics or baseline data.
+
 
 
 VALIDATION never updated weights and remained frozen during TV-01B, but its

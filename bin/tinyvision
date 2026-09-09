@@ -13,6 +13,7 @@ Usage:
   tinyvision train DATASET_ROOT MODEL_PATH
   tinyvision classify MODEL_PATH IMAGE_PATH
   tinyvision evaluate MODEL_PATH SPLIT_DIRECTORY
+  tinyvision web [--port PORT] [--host HOST]
   tinyvision verify
   tinyvision --help | -h
 
@@ -20,6 +21,7 @@ Commands:
   train       Train model on DATASET_ROOT/train and observe DATASET_ROOT/dev
   classify    Classify a single PNG/JPEG image using a trained model
   evaluate    Evaluate a trained model on a labeled split directory (e.g. dev/ or probe/)
+  web         Launch the local web GUI on 127.0.0.1
   verify      Run the complete project verification suite
 
 Options:
@@ -88,6 +90,14 @@ case "${cmd}" in
             exit 2
         fi
         exec "${target_bin}" "$@"
+        ;;
+    web)
+        server_script="${repo_root}/web/server.py"
+        if [ ! -f "${server_script}" ]; then
+            printf 'tinyvision: web server script not found: %s\n' "${server_script}" >&2
+            exit 1
+        fi
+        exec python3 "${server_script}" "$@"
         ;;
     verify)
         verify_script="${repo_root}/scripts/verify.sh"

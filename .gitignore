@@ -4,3 +4,7 @@ build/
 *.so
 *.dylib
 *.exe
+.tinyvision/
+*.tlv
+TinyLogicVision-*/
+forest_sentinel.png

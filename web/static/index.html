@@ -1,0 +1,385 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TinyLogicVision — Web GUI v0.1</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <div class="app-container">
+    <!-- Header -->
+    <header class="app-header">
+      <div class="header-brand">
+        <div class="logo-icon">TV</div>
+        <div>
+          <h1>TinyLogicVision <span class="badge-version">v0.1 Web GUI</span></h1>
+          <p class="subtitle">Dataset por Patches 8x8 • Treinamento • Avaliação • Classificação</p>
+        </div>
+      </div>
+      <div class="header-status">
+        <span class="status-indicator online"></span>
+        <span class="status-text">127.0.0.1 (Local Seguro)</span>
+        <div class="workspace-pill"><code>.tinyvision/</code></div>
+      </div>
+    </header>
+
+    <!-- Navigation Tabs -->
+    <nav class="nav-tabs">
+      <button class="tab-btn active" data-tab="tab-dataset">
+        <span class="tab-num">1</span> Preparar Dataset & Patches
+      </button>
+      <button class="tab-btn" data-tab="tab-train">
+        <span class="tab-num">2</span> Treinar Modelo
+      </button>
+      <button class="tab-btn" data-tab="tab-eval">
+        <span class="tab-num">3</span> Classificar & Avaliar
+      </button>
+      <button class="tab-btn" data-tab="tab-browser">
+        <span class="tab-num">4</span> Workspace Explorer
+      </button>
+    </nav>
+
+    <!-- Tab 1: Dataset Authoring -->
+    <main id="tab-dataset" class="tab-content active">
+      <div class="split-layout">
+        <!-- Sidebar Controls -->
+        <aside class="sidebar">
+          <!-- Step A: Image Load -->
+          <section class="card control-group">
+            <h3><span class="step-badge">A</span> 1. Abrir Imagem Fonte</h3>
+            <div class="upload-zone" id="drop-zone">
+              <input type="file" id="image-file-input" accept="image/png,image/jpeg,image/jpg" hidden>
+              <div class="upload-prompt">
+                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                  <polyline points="17 8 12 3 7 8"></polyline>
+                  <line x1="12" y1="3" x2="12" y2="15"></line>
+                </svg>
+                <span>Clique para selecionar PNG/JPEG</span>
+                <small>ou arraste a imagem aqui</small>
+              </div>
+            </div>
+
+            <!-- Image Metadata & Sentinel Resolution -->
+            <div id="image-meta" class="meta-box hidden">
+              <div class="meta-row">
+                <span class="meta-label">Arquivo:</span>
+                <span id="meta-filename" class="meta-val">-</span>
+              </div>
+              <div class="meta-row">
+                <span class="meta-label">Dimensões:</span>
+                <span id="meta-dims" class="meta-val">-</span>
+              </div>
+              <div class="meta-row">
+                <span class="meta-label">SHA-256:</span>
+                <span id="meta-sha" class="meta-val mono-small">-</span>
+              </div>
+
+              <!-- Sentinel 10m Toggle -->
+              <div class="sentinel-box">
+                <label class="toggle-container">
+                  <input type="checkbox" id="chk-sentinel-10m">
+                  <span class="toggle-slider"></span>
+                  <span class="toggle-text">Fonte é pixel Sentinel-2 nativo 10 m</span>
+                </label>
+                <div id="sentinel-badge" class="resolution-badge display-only">
+                  DISPLAY IMAGE — SEM GARANTIA DE 10 m/PIXEL
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <!-- Step B: Classes Definition -->
+          <section class="card control-group">
+            <div class="section-header-row">
+              <h3><span class="step-badge">B</span> 2. Definir Classes</h3>
+              <button id="btn-preset-sentinel" class="btn btn-xs btn-outline" title="Carregar Floresta, Campo, Solo, Água">Preset Sentinel</button>
+            </div>
+            
+            <div class="class-input-row">
+              <input type="text" id="new-class-name" placeholder="Nome da classe (ex: floresta)" class="input-text">
+              <input type="color" id="new-class-color" value="#22c55e" class="input-color">
+              <button id="btn-add-class" class="btn btn-sm btn-primary">+ Adicionar</button>
+            </div>
+
+            <div id="classes-list" class="tags-container">
+              <!-- Rendered classes -->
+            </div>
+          </section>
+
+          <!-- Step C: ROI Active Settings -->
+          <section class="card control-group">
+            <h3><span class="step-badge">C</span> 3. Regiões de Interesse (ROI)</h3>
+            <p class="help-text">Selecione a classe e o split, depois clique e arraste no canvas para criar ROIs.</p>
+            
+            <div class="form-row">
+              <div class="form-col">
+                <label>Classe para nova ROI:</label>
+                <select id="select-active-class" class="input-select"></select>
+              </div>
+              <div class="form-col">
+                <label>Split:</label>
+                <select id="select-active-split" class="input-select">
+                  <option value="train" selected>TRAIN (Treino)</option>
+                  <option value="dev">DEV (Validação)</option>
+                  <option value="probe">PROBE (Teste/Probe)</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="roi-tools-row">
+              <button id="btn-clear-rois" class="btn btn-sm btn-danger-outline">Limpar Todas ROIs</button>
+              <span id="roi-count" class="badge">0 ROIs</span>
+            </div>
+          </section>
+
+          <!-- Step D: Generate Patches -->
+          <section class="card control-group">
+            <h3><span class="step-badge">D</span> 4. Gerar Patches 8x8</h3>
+            <div class="form-row">
+              <label>Nome do Dataset:</label>
+              <input type="text" id="dataset-name-input" placeholder="ex: sentinel_cerrado_v1" class="input-text">
+            </div>
+
+            <!-- Summary Table -->
+            <div class="summary-table-container">
+              <table class="summary-table" id="dataset-summary-table">
+                <thead>
+                  <tr>
+                    <th>Classe</th>
+                    <th>TRAIN</th>
+                    <th>DEV</th>
+                    <th>PROBE</th>
+                    <th>Total</th>
+                  </tr>
+                </thead>
+                <tbody id="summary-table-body">
+                  <tr><td colspan="5" class="empty-msg">Nenhum patch selecionado</td></tr>
+                </tbody>
+              </table>
+            </div>
+
+            <div id="dataset-warnings" class="warnings-box hidden"></div>
+
+            <button id="btn-generate-dataset" class="btn btn-success btn-block" disabled>
+              ⚡ Extrair Patches 8x8 & Gerar Dataset
+            </button>
+          </section>
+        </aside>
+
+        <!-- Main Canvas Area -->
+        <div class="canvas-panel card">
+          <div class="canvas-toolbar">
+            <div class="tool-group">
+              <button id="btn-zoom-in" class="btn btn-sm btn-icon" title="Zoom +">+</button>
+              <button id="btn-zoom-out" class="btn btn-sm btn-icon" title="Zoom -">-</button>
+              <button id="btn-zoom-reset" class="btn btn-sm" title="Reset Zoom">100%</button>
+              <span id="zoom-level" class="zoom-text">100%</span>
+            </div>
+            <div class="tool-group">
+              <label class="checkbox-inline">
+                <input type="checkbox" id="chk-show-grid" checked>
+                <span>Grade 8x8 dos Patches</span>
+              </label>
+              <label class="checkbox-inline">
+                <input type="checkbox" id="chk-show-rois" checked>
+                <span>Exibir ROIs</span>
+              </label>
+            </div>
+          </div>
+
+          <div class="canvas-wrapper" id="canvas-container">
+            <canvas id="main-canvas"></canvas>
+            <div id="canvas-placeholder" class="canvas-empty-state">
+              <div class="empty-icon">🗺️</div>
+              <p>Abra uma imagem PNG/JPEG na barra lateral para começar.</p>
+            </div>
+          </div>
+
+          <div class="canvas-footer-info">
+            <span id="cursor-coords">X: - | Y: -</span>
+            <span id="canvas-patch-info">Patches selecionados: 0</span>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <!-- Tab 2: Training -->
+    <main id="tab-train" class="tab-content">
+      <div class="split-layout">
+        <aside class="sidebar">
+          <section class="card control-group">
+            <h3>Treinamento de Modelo</h3>
+            <p class="help-text">Executa o treinamento canônico C++ via <code>./bin/tinyvision train</code>.</p>
+            
+            <div class="form-row">
+              <label>Dataset:</label>
+              <select id="train-select-dataset" class="input-select"></select>
+            </div>
+
+            <div class="form-row">
+              <label>Nome do Modelo (.tlv):</label>
+              <input type="text" id="train-model-name" placeholder="ex: modelo_cerrado_v1" class="input-text">
+            </div>
+
+            <button id="btn-start-train" class="btn btn-primary btn-block">
+              ▶ TREINAR MODELO
+            </button>
+          </section>
+
+          <!-- Training Summary Card -->
+          <section class="card control-group">
+            <h3>Parâmetros TV-APP-00</h3>
+            <div class="meta-box">
+              <div class="meta-row">
+                <span class="meta-label">Entrada:</span>
+                <span class="meta-val">192 (8x8x3 RGB)</span>
+              </div>
+              <div class="meta-row">
+                <span class="meta-label">Oculta:</span>
+                <span class="meta-val">24 unidades tanh</span>
+              </div>
+              <div class="meta-row">
+                <span class="meta-label">Otimizador:</span>
+                <span class="meta-val">SGD por amostra (lr=0.025)</span>
+              </div>
+              <div class="meta-row">
+                <span class="meta-label">Épocas:</span>
+                <span class="meta-val">180</span>
+              </div>
+            </div>
+          </section>
+        </aside>
+
+        <div class="training-results-panel card">
+          <div class="panel-header">
+            <h3>Progresso do Treinamento</h3>
+            <span id="train-status-badge" class="badge">Aguardando</span>
+          </div>
+
+          <div class="metrics-grid">
+            <div class="metric-card">
+              <div class="metric-label">Acurácia Treino Final</div>
+              <div id="metric-train-acc" class="metric-value">-</div>
+            </div>
+            <div class="metric-card">
+              <div class="metric-label">Acurácia DEV Final</div>
+              <div id="metric-dev-acc" class="metric-value">-</div>
+            </div>
+            <div class="metric-card">
+              <div class="metric-label">Loss DEV Final</div>
+              <div id="metric-dev-loss" class="metric-value">-</div>
+            </div>
+            <div class="metric-card">
+              <div class="metric-label">Parâmetros Treináveis</div>
+              <div id="metric-params" class="metric-value">-</div>
+            </div>
+          </div>
+
+          <div class="terminal-log-container">
+            <div class="terminal-header">Saída do Processo (./bin/tinyvision train)</div>
+            <pre id="train-terminal-log" class="terminal-body">// Os logs de treinamento aparecerão aqui...</pre>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <!-- Tab 3: Classify & Evaluate -->
+    <main id="tab-eval" class="tab-content">
+      <div class="split-layout">
+        <!-- Classification Section -->
+        <div class="card panel-section">
+          <h3>Classificar Imagem Individual</h3>
+          <p class="help-text">Executa <code>./bin/tinyvision classify MODEL IMAGE</code>.</p>
+          
+          <div class="form-row">
+            <label>Modelo:</label>
+            <select id="classify-select-model" class="input-select"></select>
+          </div>
+
+          <div class="form-row">
+            <label>Imagem para Classificação:</label>
+            <input type="file" id="classify-image-file" accept="image/png,image/jpeg" class="input-file">
+          </div>
+
+          <button id="btn-run-classify" class="btn btn-primary">🔍 Classificar</button>
+
+          <div id="classify-results" class="results-box hidden">
+            <h4>Resultado:</h4>
+            <div class="predicted-banner">
+              Classe Predita: <strong id="classify-pred-class" class="text-emerald">-</strong>
+              <span id="classify-pred-score" class="score-badge">-</span>
+            </div>
+            <div id="classify-probs-container" class="prob-bars-container"></div>
+          </div>
+        </div>
+
+        <!-- Evaluation Section -->
+        <div class="card panel-section">
+          <h3>Avaliar Split do Dataset</h3>
+          <p class="help-text">Executa <code>./bin/tinyvision evaluate MODEL SPLIT</code>.</p>
+          
+          <div class="form-row">
+            <label>Modelo:</label>
+            <select id="eval-select-model" class="input-select"></select>
+          </div>
+
+          <div class="form-row">
+            <label>Dataset:</label>
+            <select id="eval-select-dataset" class="input-select"></select>
+          </div>
+
+          <div class="btn-group-row">
+            <button id="btn-eval-dev" class="btn btn-primary">📊 AVALIAR DEV</button>
+            <button id="btn-eval-probe" class="btn btn-warning">🔒 AVALIAR PROBE (Held-out)</button>
+          </div>
+
+          <div id="eval-results" class="results-box hidden">
+            <h4>Métricas de Avaliação (<span id="eval-split-tag">DEV</span>):</h4>
+            <div class="metrics-grid">
+              <div class="metric-card">
+                <div class="metric-label">Acurácia</div>
+                <div id="eval-acc" class="metric-value text-emerald">-</div>
+              </div>
+              <div class="metric-card">
+                <div class="metric-label">Amostras</div>
+                <div id="eval-samples" class="metric-value">-</div>
+              </div>
+              <div class="metric-card">
+                <div class="metric-label">Loss Médio</div>
+                <div id="eval-loss" class="metric-value">-</div>
+              </div>
+              <div class="metric-card">
+                <div class="metric-label">Probabilidade Média Correta</div>
+                <div id="eval-mean-prob" class="metric-value">-</div>
+              </div>
+            </div>
+
+            <div class="confusion-section">
+              <h5>Matriz de Confusão (Linhas = Real, Colunas = Predito):</h5>
+              <div id="confusion-matrix-container" class="matrix-table-wrapper"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <!-- Tab 4: Workspace Explorer -->
+    <main id="tab-browser" class="tab-content">
+      <div class="workspace-grid">
+        <div class="card">
+          <h3>Datasets em <code>.tinyvision/datasets/</code></h3>
+          <div id="browser-datasets-list" class="items-list"></div>
+        </div>
+        <div class="card">
+          <h3>Modelos em <code>.tinyvision/models/</code></h3>
+          <div id="browser-models-list" class="items-list"></div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>
