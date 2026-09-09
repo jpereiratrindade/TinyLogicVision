@@ -89,9 +89,36 @@ cmake --build build
 - **Geometria dos Artefatos**:
   - `class_map.png`, `confidence.png` (Probabilidade Top-1) e `margin.png` (Margem Top-1 − Top-2) são rasters no **GRID SPACE** ($N_x \times N_y$), onde cada pixel é uma decisão.
   - `overlay.png` é gerado pelo engine C++ como **autoridade única canônica** no espaço da imagem fonte ($W \times H$), projetando cada decisão em sua célula $\text{stride} \times \text{stride}$ centrada na âncora de exibição: $[\text{display\_x} - \lfloor\text{stride}/2\rfloor, \text{display\_y} - \lfloor\text{stride}/2\rfloor]$ com clipping determinístico nas bordas.
-- **Interpretação de Incerteza**:
-  - $p_1 = \text{top-1 probability}$, $p_2 = \text{top-2 probability}$, $\text{margin} = p_1 - p_2$.
-  - Status `UNCERTAIN` significa `UNCERTAIN_BY_CONFIGURED_THRESHOLD` ($p_1 < \text{confidence\_threshold}$ ou $\text{margin} < \text{margin\_threshold}$), sem alegar calibração probabilística ou incerteza epistemológica.
+- **Interpretação e Papel dos Limiares de Decisão**:
+
+  Na inferência de cada janela $8 \times 8$, a camada softmax produz probabilidades uncalibradas para as $N$ classes:
+  - $p_1$ (**Probabilidade Top-1**): Maior probabilidade obtida (classe predita).
+  - $p_2$ (**Probabilidade Top-2**): Segunda maior probabilidade obtida.
+  - $\text{Margem} = p_1 - p_2$: Diferença entre a primeira e a segunda opção.
+
+  ```text
+                    ┌─ p1 < Limiar de Probabilidade  ──┐
+  Softmax (p1, p2) ─┤                                  ├──> Status: UNCERTAIN (Cinza #808080)
+                    └─ (p1 - p2) < Limiar de Margem ───┘
+                                    │
+                         (Se ambos forem atendidos)
+                                    ↓
+                         Status: CLASSIFIED (Cor da Classe)
+  ```
+
+  - **Limiar de Probabilidade Top-1 (`confidence_threshold`)**:
+    *Pergunta que responde*: "A classe vencedora tem força suficiente?"
+    *Função*: Rejeita janelas onde o modelo não tem ativação expressiva para nenhuma classe conhecida (ex: ruído, nuvens ou padrões fora do domínio de treino).
+    *Exemplo*: Em 3 classes, se as saídas forem $[0.36, 0.33, 0.31]$, a vencedora tem apenas $36\%$. Com limiar de $0.50$, a decisão é descartada e marcada como `UNCERTAIN`.
+
+  - **Limiar de Margem Top-1 − Top-2 (`margin_threshold`)**:
+    *Pergunta que responde*: "O modelo está indeciso entre duas classes concorrentes?"
+    *Função*: Rejeita **ambiguidades competitivas** em zonas de transição ecológica (ex: borda floresta/campo ou transição solo/vegetação rala).
+    *Exemplo*: Se $p_1 = 0.51$ (floresta) e $p_2 = 0.49$ (campo), $p_1$ passa no limiar de probabilidade $0.50$, mas a margem é de apenas $0.02$ ($2\%$). Com limiar de margem de $0.10$ ($10\%$), a ambiguidade é detectada e a decisão é marcada como `UNCERTAIN`.
+
+  - **Interpretação Científica Rigorosa**:
+    O status `UNCERTAIN` reflete exclusivamente **rejeição por limiar configurado pelo operador** (`UNCERTAIN_BY_CONFIGURED_THRESHOLD`). Não representa incerteza epistemológica nem calibração probabilística Bayesiana.
+
 - **Integridade dos Splits**:
   - Validação estrita de `ROI-LEVEL SPLIT INTEGRITY + NON-OVERLAPPING 8x8 SAMPLE SUPPORTS ACROSS SPLITS` em todos os geradores de dataset. Não se alega independência espacial global irrestrita além dos mecanismos implementados.
 
