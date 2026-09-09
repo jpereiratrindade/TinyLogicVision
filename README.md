@@ -2,7 +2,8 @@
 
 TinyLogicVision is a deliberately tiny RGB vision-learning experiment written
 from scratch in C++23. Its current synthetic baseline is complete, deterministic,
-and independently verifiable from a clean clone.
+and independently verifiable from a clean clone. A separate TV-APP-00 surface
+can now train and apply the same tiny MLP to labeled PNG/JPEG patches.
 
 ## Current status
 
@@ -12,14 +13,17 @@ and independently verifiable from a clean clone.
 | TV-01A | Generalization observatory | PASS — validation failure observed |
 | TV-01B | Spatial-coverage intervention | STRONG SUPPORT |
 | TV-01C | Sealed synthetic TEST | NOT EXECUTED |
+| TV-APP-00 | Real RGB application pipeline | READY — natural-image probe not executed |
 
 TV-00 contains fixed-size 8x8 RGB inputs, one 24-unit `tanh` hidden layer,
 four softmax outputs, cross-entropy loss, a manual backward pass, and
 per-sample SGD on CPU. The model has 4,732 trainable parameters. Numerical
 gradient checking and deterministic training tests exercise the implementation.
 
-No ML/tensor framework, pretrained model, image library, SisTer integration,
-OBCE code, geospatial assumption, or web frontend is used.
+No ML/tensor framework or pretrained model is used. The application layer uses
+libpng and libjpeg only for RGB decoding; the resize, model, loss, backward pass,
+training, persistence, and evaluation remain explicit project code. No SisTer
+integration, OBCE code, geospatial assumption, or web frontend is used.
 
 ## Canonical verification
 
@@ -29,8 +33,9 @@ After cloning, run the complete synthetic baseline verification with:
 ./scripts/verify.sh
 ```
 
-The command configures and builds the Release/Ninja tree, runs all four tests,
-and checks the TV-00, TV-01A, and TV-01B witnesses. It does not evaluate TEST.
+The command configures and builds the Release/Ninja tree, runs all five tests,
+and checks the TV-00, TV-01A, TV-01B, and TV-APP-00 engineering witnesses. It
+does not evaluate synthetic TEST or a natural-image application probe.
 
 The equivalent manual build commands are:
 
@@ -39,6 +44,9 @@ cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j 4
 ctest --test-dir build --output-on-failure
 ```
+
+Build prerequisites are a C++23 compiler, CMake, Ninja, and development packages
+for libpng and libjpeg.
 
 ## Evidence sequence
 
@@ -93,6 +101,42 @@ VALIDATION remained frozen and never updated model weights, but it participated
 in the formulation of the TV-01B intervention. It is therefore an experimental
 development distribution. Independent confirmation remains reserved for the
 sealed TEST split.
+
+## TV-APP-00 — Real RGB application surface
+
+TV-APP-00 is a parallel application track. It does not open TV-01C or alter the
+frozen synthetic evidence.
+
+Expected dataset structure:
+
+```text
+dataset/
+├── train/<class>/*.{png,jpg,jpeg}
+├── dev/<class>/*.{png,jpg,jpeg}
+└── probe/<class>/*.{png,jpg,jpeg}
+```
+
+Train on `train/`, observe `dev/`, and persist the final epoch:
+
+```bash
+./build/tinyvision_train ./dataset ./model.tlv
+```
+
+Classify one image or explicitly evaluate a labeled probe:
+
+```bash
+./build/tinyvision_classify ./model.tlv ./example.jpg
+./build/tinyvision_evaluate ./model.tlv ./dataset/probe
+```
+
+The training command never reads `probe/`. The output layer follows the number
+of sorted class directories: a three-class `192→24→3` model has 4,707 trainable
+parameters, while the four-class synthetic model has 4,732.
+
+The automated test uses controlled PNG/JPEG fixtures to verify the technical
+pipeline. It is not evidence of useful classification on natural images. See
+the [TV-APP-00 protocol](docs/TV-APP-00-real-rgb-probe.md) before constructing a
+claim-bearing real dataset.
 
 ## Evidence limits
 

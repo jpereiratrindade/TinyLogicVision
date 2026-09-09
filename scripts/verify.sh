@@ -63,7 +63,7 @@ run_witness() {
     pass "${label}" PASS
 }
 
-printf 'TinyLogicVision synthetic baseline verification\n\n'
+printf 'TinyLogicVision project verification\n\n'
 
 run_step configure cmake -S "${verify_root}" -B "${verify_build}" \
     -G Ninja -DCMAKE_BUILD_TYPE=Release
@@ -73,6 +73,7 @@ run_test gradient_test gradient_test
 run_test training_test training_test
 run_test "TV-01A test" generalization_observatory_test
 run_test "TV-01B test" spatial_coverage_experiment_test
+run_test "TV-APP-00 test" application_pipeline_test
 
 run_witness "TV-00 witness" "${verify_build}/tinyvision" \
     "epoch=180 loss=0.000400 accuracy=100.000000%" \
@@ -96,6 +97,12 @@ for tv01b_expected in \
     fi
 done
 pass "TV-01B witness" "STRONG SUPPORT"
+run_witness "TV-APP-00 pipeline" "${verify_build}/application_pipeline_test" \
+    "TV-APP-00 engineering pipeline PASS" \
+    "classes=3 parameters=4707" \
+    "repetition=EXACT" \
+    "synthetic_test_status=NOT_EVALUATED"
 
 printf '\n'
+pass "NATURAL APP PROBE" NOT_EVALUATED
 pass TEST "SEALED / NOT_EVALUATED"
