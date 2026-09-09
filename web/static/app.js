@@ -1594,17 +1594,26 @@ function renderDenseMapResults(runId, metadata) {
   // Setup view mode buttons
   const modeBtns = el.denseResultsPanel.querySelectorAll('.btn-mode');
   modeBtns.forEach((btn) => {
+    if (btn.dataset.mode === 'h3_aggr') {
+      btn.disabled = !(metadata.h3 && metadata.h3.available);
+      btn.title = btn.disabled ? 'H3 requer fonte georreferenciada e biblioteca H3 oficial' : 'Abrir CSV agregado por célula H3';
+    }
     btn.onclick = () => {
+      const mode = btn.dataset.mode;
+      if (mode === 'h3_aggr') {
+        if (metadata.h3 && metadata.h3.available) {
+          window.open(`/api/runs/${runId}/classification_h3.csv`, '_blank', 'noopener');
+        }
+        return;
+      }
       modeBtns.forEach((b) => b.classList.remove('active'));
       btn.classList.add('active');
-      const mode = btn.dataset.mode;
       const srcMap = {
         overlay: `/api/runs/${runId}/overlay.png`,
         class_map: `/api/runs/${runId}/class_map.png`,
         confidence: `/api/runs/${runId}/confidence.png`,
         margin: `/api/runs/${runId}/margin.png`,
-        h3_aggr: `/api/runs/${runId}/overlay.png`,
-        source: `/api/image?path=${encodeURIComponent(metadata.source_image || '')}`,
+        source: `/api/image?path=${encodeURIComponent(metadata.source_image_path || '')}`,
       };
       dImg.src = srcMap[mode] || srcMap.overlay;
     };
@@ -1628,8 +1637,9 @@ function renderDenseMapResults(runId, metadata) {
       el.inspOrigin.textContent = `(${d.origin_x}, ${d.origin_y})`;
       el.inspCenter.textContent = `(${d.center_x}, ${d.center_y})`;
 
-      if (metadata.geotransform && metadata.geotransform.length === 6) {
-        const gt = metadata.geotransform;
+      const geospatial = metadata.geospatial || {};
+      if (geospatial.available && geospatial.geotransform && geospatial.geotransform.length === 6) {
+        const gt = geospatial.geotransform;
         const cx = parseFloat(d.center_x);
         const cy = parseFloat(d.center_y);
         const mapX = gt[0] + cx * gt[1] + cy * gt[2];
@@ -1638,8 +1648,10 @@ function renderDenseMapResults(runId, metadata) {
       } else {
         el.inspMapCoords.textContent = 'NOT_AVAILABLE';
       }
-      el.inspLatLon.textContent = metadata.crs ? metadata.crs.slice(0, 30) : 'NOT_AVAILABLE';
-      el.inspH3Index.textContent = metadata.h3_resolution !== undefined ? `Res ${metadata.h3_resolution}` : 'NOT_AVAILABLE';
+      el.inspLatLon.textContent = geospatial.crs ? geospatial.crs.slice(0, 60) : 'NOT_AVAILABLE';
+      el.inspH3Index.textContent = metadata.h3 && metadata.h3.available
+        ? `Res ${metadata.h3.resolution} — CSV agregado`
+        : 'NOT_AVAILABLE';
 
       el.inspTop1Class.textContent = d.predicted_class || '-';
       el.inspTop1Prob.textContent = d.probability || '-';

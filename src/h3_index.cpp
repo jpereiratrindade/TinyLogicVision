@@ -8,46 +8,87 @@
 #include <sstream>
 #include <stdexcept>
 
+#ifdef TINYVISION_WITH_H3
+#include <h3/h3api.h>
+#endif
+
+#ifdef TINYVISION_WITH_GDAL
+#include <ogr_spatialref.h>
+#endif
+
 namespace tinyvision {
-namespace {
 
-// Deterministic cell discretization for geospatial hexagonal indexing
-std::uint64_t compute_hex_cell_id(double lat_deg, double lon_deg, int res) {
-    res = std::clamp(res, 0, 15);
-    // Base cell scale at resolution res: spacing ~ 360.0 / (2^res * 100)
-    const double cell_scale = 100.0 * std::pow(1.5, static_cast<double>(res));
-    const double x = (lon_deg + 180.0) * cell_scale;
-    const double y = (lat_deg + 90.0) * cell_scale;
-
-    // Hexagonal coordinate quantization (skewed axial coordinates)
-    const double q = (std::sqrt(3.0) / 3.0 * x - 1.0 / 3.0 * y);
-    const double r = (2.0 / 3.0 * y);
-
-    const auto qi = static_cast<std::int64_t>(std::round(q));
-    const auto ri = static_cast<std::int64_t>(std::round(r));
-
-    // Construct 64-bit index: [mode(4 bits) | res(4 bits) | base_cell(8 bits) | coord_q(24 bits) | coord_r(24 bits)]
-    const std::uint64_t mode = 1ULL; // H3 index mode
-    const std::uint64_t res_bits = static_cast<std::uint64_t>(res) & 0x0fULL;
-    const std::uint64_t q_bits = static_cast<std::uint64_t>(qi) & 0x00ffffffULL;
-    const std::uint64_t r_bits = static_cast<std::uint64_t>(ri) & 0x00ffffffULL;
-
-    return (mode << 59) | (res_bits << 52) | (q_bits << 24) | r_bits;
+bool h3_available() noexcept {
+#ifdef TINYVISION_WITH_H3
+    return true;
+#else
+    return false;
+#endif
 }
 
-} // namespace
+bool h3_aggregation_available() noexcept {
+#if defined(TINYVISION_WITH_H3) && defined(TINYVISION_WITH_GDAL)
+    return true;
+#else
+    return false;
+#endif
+}
 
 std::string latlon_to_h3_index(double lat_deg, double lon_deg, int resolution) {
-    const std::uint64_t cell_id = compute_hex_cell_id(lat_deg, lon_deg, resolution);
-    std::ostringstream ss;
-    ss << std::hex << std::setfill('0') << std::setw(15) << cell_id;
-    return ss.str();
+#ifdef TINYVISION_WITH_H3
+    if (!std::isfinite(lat_deg) || !std::isfinite(lon_deg) ||
+        lat_deg < -90.0 || lat_deg > 90.0 || lon_deg < -180.0 || lon_deg > 180.0) {
+        throw std::invalid_argument("H3 coordinates must be finite WGS84 latitude/longitude degrees");
+    }
+    if (resolution < 0 || resolution > 15) {
+        throw std::invalid_argument("H3 resolution must be in [0, 15]");
+    }
+    const LatLng coordinate{degsToRads(lat_deg), degsToRads(lon_deg)};
+    H3Index cell = H3_NULL;
+    if (latLngToCell(&coordinate, resolution, &cell) != E_SUCCESS || !isValidCell(cell)) {
+        throw std::runtime_error("official H3 library failed to index WGS84 coordinate");
+    }
+    char text[17]{}; // 64-bit H3 index: at most 16 hexadecimal digits plus NUL.
+    if (h3ToString(cell, text, sizeof(text)) != E_SUCCESS) {
+        throw std::runtime_error("official H3 library failed to format cell index");
+    }
+    return text;
+#else
+    (void)lat_deg;
+    (void)lon_deg;
+    (void)resolution;
+    throw std::runtime_error("H3 support is unavailable; rebuild with the official H3 library");
+#endif
 }
 
 std::vector<H3CellAggregate> aggregate_dense_run_h3(const DenseMapResult& result,
                                                     int resolution,
                                                     const std::string& source_run,
                                                     const std::string& model_hash) {
+#if !defined(TINYVISION_WITH_H3) || !defined(TINYVISION_WITH_GDAL)
+    (void)result;
+    (void)resolution;
+    (void)source_run;
+    (void)model_hash;
+    throw std::runtime_error("H3 aggregation requires official H3 and GDAL support");
+#else
+    if (!result.metadata.has_geo || result.metadata.crs.empty()) {
+        throw std::invalid_argument("H3 aggregation requires a georeferenced source CRS");
+    }
+
+    OGRSpatialReference source_reference;
+    OGRSpatialReference wgs84_reference;
+    source_reference.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
+    wgs84_reference.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
+    if (source_reference.SetFromUserInput(result.metadata.crs.c_str()) != OGRERR_NONE ||
+        wgs84_reference.SetWellKnownGeogCS("WGS84") != OGRERR_NONE) {
+        throw std::invalid_argument("cannot parse source CRS for H3 aggregation: " + result.metadata.crs);
+    }
+    auto* transformation = OGRCreateCoordinateTransformation(&source_reference, &wgs84_reference);
+    if (transformation == nullptr) {
+        throw std::runtime_error("cannot transform source CRS to WGS84 for H3 aggregation");
+    }
+
     struct Accumulator {
         std::size_t total{0};
         std::size_t classified{0};
@@ -59,35 +100,30 @@ std::vector<H3CellAggregate> aggregate_dense_run_h3(const DenseMapResult& result
 
     std::map<std::string, Accumulator> cell_acc;
 
-    for (const auto& d : result.decisions) {
-        // Map decision center (map_x, map_y) to lat/lon approximation (or directly if geographic)
-        // If CRS is projected (e.g. UTM meters), map_x/map_y are continuous coordinates
-        double lat = d.map_y;
-        double lon = d.map_x;
-
-        if (result.metadata.has_geo) {
-            // If UTM (e.g. northing ~ 7000000, easting ~ 500000), approximate latitude/longitude degrees
-            if (std::abs(lat) > 360.0 || std::abs(lon) > 360.0) {
-                lat = (d.map_y - 10000000.0) / 111320.0;
-                lon = (d.map_x - 500000.0) / 111320.0;
+    try {
+        for (const auto& d : result.decisions) {
+            double lon = d.map_x;
+            double lat = d.map_y;
+            if (!transformation->Transform(1, &lon, &lat)) {
+                throw std::runtime_error("GDAL failed to transform a decision point to WGS84");
             }
-        } else {
-            // Default continuous grid space
-            lat = d.center_y;
-            lon = d.center_x;
-        }
 
-        const std::string h3_cell = latlon_to_h3_index(lat, lon, resolution);
-        auto& acc = cell_acc[h3_cell];
-        acc.total++;
-        if (d.is_uncertain) {
-            acc.uncertain++;
-        } else {
-            acc.classified++;
-            acc.class_counts[d.predicted_class]++;
+            const std::string h3_cell = latlon_to_h3_index(lat, lon, resolution);
+            auto& acc = cell_acc[h3_cell];
+            acc.total++;
+            if (d.is_uncertain) {
+                acc.uncertain++;
+            } else {
+                acc.classified++;
+                acc.class_counts[d.predicted_class]++;
+            }
+            acc.sum_top1 += d.probability;
+            acc.sum_margin += d.margin;
         }
-        acc.sum_top1 += d.probability;
-        acc.sum_margin += d.margin;
+        OCTDestroyCoordinateTransformation(transformation);
+    } catch (...) {
+        OCTDestroyCoordinateTransformation(transformation);
+        throw;
     }
 
     std::vector<H3CellAggregate> aggregates;
@@ -121,6 +157,7 @@ std::vector<H3CellAggregate> aggregate_dense_run_h3(const DenseMapResult& result
     }
 
     return aggregates;
+#endif
 }
 
 void export_h3_aggregation_csv(const std::vector<H3CellAggregate>& aggregates,

@@ -10,6 +10,14 @@
 #include <iostream>
 #include <vector>
 
+#ifdef TINYVISION_WITH_H3
+#include <h3/h3api.h>
+#endif
+
+#ifdef TINYVISION_WITH_GDAL
+#include <ogr_spatialref.h>
+#endif
+
 namespace {
 
 void fail(const std::string& msg) {
@@ -25,11 +33,26 @@ int main() {
     const auto tmp_dir = std::filesystem::temp_directory_path() / "tv_h3_test";
     std::filesystem::create_directories(tmp_dir);
 
-    // 1. Test deterministic hex index calculation
+#ifndef TINYVISION_WITH_H3
+    bool unavailable_rejected = false;
+    try {
+        (void)tinyvision::latlon_to_h3_index(-23.5505, -46.6333, 9);
+    } catch (const std::runtime_error&) {
+        unavailable_rejected = true;
+    }
+    if (tinyvision::h3_available() || !unavailable_rejected) {
+        fail("missing H3 dependency was not reported explicitly");
+    }
+    std::cout << "PASS: h3_test (official H3 dependency unavailable; no synthetic fallback)\n";
+    return 0;
+#else
+    // 1. Test against a known official H3 4.x result for Sao Paulo.
     const std::string idx1 = tinyvision::latlon_to_h3_index(-23.5505, -46.6333, 9);
     const std::string idx2 = tinyvision::latlon_to_h3_index(-23.5505, -46.6333, 9);
-    if (idx1 != idx2 || idx1.empty()) {
-        fail("latlon_to_h3_index is not deterministic");
+    H3Index parsed = H3_NULL;
+    if (idx1 != idx2 || idx1 != "89a8100c02fffff" ||
+        stringToH3(idx1.c_str(), &parsed) != E_SUCCESS || !isValidCell(parsed)) {
+        fail("latlon_to_h3_index does not match a valid official H3 cell");
     }
 
     // 2. Test cell split assignment (1 cell = exactly 1 split)
@@ -50,6 +73,12 @@ int main() {
     if (train_cnt + dev_cnt + probe_cnt != cells.size() || train_cnt == 0) {
         fail("Split partition failed to assign valid disjoint subsets");
     }
+
+#ifndef TINYVISION_WITH_GDAL
+    if (tinyvision::h3_aggregation_available()) fail("H3 aggregation reports available without GDAL");
+    std::cout << "PASS: h3_test (official H3 index; projected aggregation requires GDAL)\n";
+    return 0;
+#else
 
     // 3. Test Dense Classification Aggregation by H3
     std::vector<std::string> classes{"floresta", "campo", "solo"};
@@ -78,6 +107,32 @@ int main() {
     if (aggregates.empty()) {
         fail("H3 aggregation produced 0 cells");
     }
+
+    // Independently transform the first projected decision to WGS84 and verify
+    // that its official H3 cell is present in the aggregation.
+    OGRSpatialReference source_reference;
+    OGRSpatialReference wgs84_reference;
+    source_reference.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
+    wgs84_reference.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
+    if (source_reference.SetFromUserInput(meta.crs.c_str()) != OGRERR_NONE ||
+        wgs84_reference.SetWellKnownGeogCS("WGS84") != OGRERR_NONE) {
+        fail("test could not initialize CRS transformation");
+    }
+    auto* transformation = OGRCreateCoordinateTransformation(&source_reference, &wgs84_reference);
+    if (transformation == nullptr) fail("test could not create CRS transformation");
+    double first_lon = res.decisions.front().map_x;
+    double first_lat = res.decisions.front().map_y;
+    if (!transformation->Transform(1, &first_lon, &first_lat)) {
+        OCTDestroyCoordinateTransformation(transformation);
+        fail("test could not transform projected decision point");
+    }
+    OCTDestroyCoordinateTransformation(transformation);
+    const auto expected_first_cell = tinyvision::latlon_to_h3_index(first_lat, first_lon, 9);
+    bool projected_cell_found = false;
+    for (const auto& aggregate : aggregates) {
+        if (aggregate.h3_index == expected_first_cell) projected_cell_found = true;
+    }
+    if (!projected_cell_found) fail("projected CRS was not converted correctly before H3 indexing");
 
     std::size_t total_agg_decisions = 0;
     std::size_t total_agg_classified = 0;
@@ -120,6 +175,8 @@ int main() {
     std::error_code ec;
     std::filesystem::remove_all(tmp_dir, ec);
 
-    std::cout << "PASS: h3_test (deterministic hex indexing, cell split integrity, aggregation counts, classification_h3.csv)\n";
+    std::cout << "PASS: h3_test (official H3, projected CRS transform, aggregation, CSV)\n";
     return 0;
+#endif
+#endif
 }

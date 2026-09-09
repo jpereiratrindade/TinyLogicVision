@@ -11,8 +11,10 @@
 
 namespace tinyvision {
 
-// Computes a deterministic geospatial hex cell index for (lat, lon) at specified resolution (0..15)
+// Computes an official H3 cell index for WGS84 latitude/longitude (degrees).
 std::string latlon_to_h3_index(double lat_deg, double lon_deg, int resolution);
+bool h3_available() noexcept;
+bool h3_aggregation_available() noexcept;
 
 struct H3CellAggregate {
     std::string h3_index;

@@ -459,7 +459,7 @@ def main():
             print("Testing Sentinel-2 4-band native 256-input pipeline (.tvp datasets, 256->24->3 MLP)...")
             try:
                 import numpy as np
-                from osgeo import gdal
+                from osgeo import gdal, osr
                 s2_dir = Path(tmp_dir) / "sentinel_bands"
                 s2_dir.mkdir(parents=True, exist_ok=True)
                 bands_map = {}
@@ -468,6 +468,10 @@ def main():
                     b_path = s2_dir / f"{b_name}.tif"
                     drv = gdal.GetDriverByName("GTiff")
                     ds = drv.Create(str(b_path), 32, 32, 1, gdal.GDT_UInt16)
+                    reference = osr.SpatialReference()
+                    reference.ImportFromEPSG(32722)
+                    ds.SetProjection(reference.ExportToWkt())
+                    ds.SetGeoTransform((500000.0, 10.0, 0.0, 7500000.0, 0.0, -10.0))
                     # Fill top 1/3 with vegetation (high NIR), bottom with soil (low NIR)
                     arr = np.full((32, 32), base_val, dtype=np.uint16)
                     if "B08" in b_name:
@@ -606,6 +610,17 @@ def main():
                     assert s2_run_meta["source_width"] == 32
                     assert s2_run_meta["source_height"] == 32
                     assert s2_run_meta["decision_count"] == 16
+                    assert s2_run_meta["geospatial"]["available"] is True
+                    assert s2_run_meta["h3"]["implementation"] in ("OFFICIAL_H3", "UNAVAILABLE")
+
+                geospatial_artifacts = ["class_map.tif", "confidence.tif", "margin.tif"]
+                if s2_run_meta["h3"]["available"]:
+                    assert s2_run_meta["h3"]["implementation"] == "OFFICIAL_H3"
+                    geospatial_artifacts.append("classification_h3.csv")
+                for artifact in geospatial_artifacts:
+                    with urllib.request.urlopen(f"{base_url}/api/runs/{s2_run_id}/{artifact}") as res:
+                        assert res.status == 200
+                        assert len(res.read()) > 0
 
                 # A 256-input model must reject an RGB-only dense source.
                 invalid_s2_dense_payload = json.dumps({

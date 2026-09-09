@@ -1,4 +1,5 @@
 #include "tinyvision/dense.hpp"
+#include "tinyvision/h3_index.hpp"
 #include "tinyvision/image.hpp"
 
 #include <algorithm>
@@ -133,6 +134,29 @@ std::string compute_file_sha256(const std::filesystem::path& file_path) {
         sha256_update(ctx, reinterpret_cast<const std::uint8_t*>(buffer), static_cast<std::size_t>(file.gcount()));
     }
     return sha256_final(ctx);
+}
+
+std::string json_escape(const std::string& value) {
+    std::ostringstream escaped;
+    for (const unsigned char ch : value) {
+        switch (ch) {
+        case '"': escaped << "\\\""; break;
+        case '\\': escaped << "\\\\"; break;
+        case '\b': escaped << "\\b"; break;
+        case '\f': escaped << "\\f"; break;
+        case '\n': escaped << "\\n"; break;
+        case '\r': escaped << "\\r"; break;
+        case '\t': escaped << "\\t"; break;
+        default:
+            if (ch < 0x20) {
+                escaped << "\\u" << std::hex << std::setw(4) << std::setfill('0')
+                        << static_cast<unsigned int>(ch) << std::dec;
+            } else {
+                escaped << static_cast<char>(ch);
+            }
+        }
+    }
+    return escaped.str();
 }
 
 std::array<std::uint8_t, 3> get_decision_color(const PaletteConfig& palette,
@@ -547,17 +571,18 @@ void export_dense_map(const DenseMapResult& result,
     const std::string source_sha = compute_file_sha256(source_path);
 
     js << "{\n"
-       << "  \"run_id\": \"" << output_dir.filename().string() << "\",\n"
+       << "  \"run_id\": \"" << json_escape(output_dir.filename().string()) << "\",\n"
        << "  \"timestamp\": \"" << timestamp_buf << "\",\n"
-       << "  \"model_path\": \"" << model_path.string() << "\",\n"
+       << "  \"model_path\": \"" << json_escape(model_path.string()) << "\",\n"
        << "  \"model_sha256\": \"" << model_sha << "\",\n"
-       << "  \"source_image\": \"" << source_path.filename().string() << "\",\n"
+       << "  \"source_image\": \"" << json_escape(source_path.filename().string()) << "\",\n"
+       << "  \"source_image_path\": \"" << json_escape(source_path.string()) << "\",\n"
        << "  \"source_sha256\": \"" << source_sha << "\",\n"
        << "  \"source_width\": " << result.source_width << ",\n"
        << "  \"source_height\": " << result.source_height << ",\n"
        << "  \"preview_width\": " << source_image.width << ",\n"
        << "  \"preview_height\": " << source_image.height << ",\n"
-       << "  \"input_modality\": \"" << modality_to_string(model.schema.modality) << "\",\n"
+       << "  \"input_modality\": \"" << json_escape(modality_to_string(model.schema.modality)) << "\",\n"
        << "  \"input_channels\": " << model.schema.channels << ",\n"
        << "  \"patch_width\": 8,\n"
        << "  \"patch_height\": 8,\n"
@@ -567,7 +592,7 @@ void export_dense_map(const DenseMapResult& result,
        << "  \"decision_count\": " << result.total_decisions << ",\n"
        << "  \"classes\": [";
     for (std::size_t i = 0; i < model.class_names.size(); ++i) {
-        js << "\"" << model.class_names[i] << "\"" << (i + 1 < model.class_names.size() ? ", " : "");
+        js << "\"" << json_escape(model.class_names[i]) << "\"" << (i + 1 < model.class_names.size() ? ", " : "");
     }
     js << "],\n"
        << "  \"spatial_semantics\": {\n"
@@ -583,7 +608,7 @@ void export_dense_map(const DenseMapResult& result,
        << "    \"status_definition\": \"UNCERTAIN when top1 < confidence_threshold OR margin < margin_threshold (UNCERTAIN_BY_CONFIGURED_THRESHOLD)\"\n"
        << "  },\n"
        << "  \"engineering_stats\": {\n"
-       << "    \"implementation_mode\": \"" << result.implementation_mode << "\",\n"
+       << "    \"implementation_mode\": \"" << json_escape(result.implementation_mode) << "\",\n"
        << "    \"thread_count\": " << result.thread_count << ",\n"
        << "    \"tile_dimensions\": [" << result.config.tile_width << ", " << result.config.tile_height << "],\n"
        << "    \"decision_record_version\": 1,\n"
@@ -605,31 +630,36 @@ void export_dense_map(const DenseMapResult& result,
        << "    \"classes\": [\n";
     for (std::size_t i = 0; i < result.palette.classes.size(); ++i) {
         const auto& c = result.palette.classes[i];
-        js << "      {\"name\": \"" << c.name << "\", \"index\": " << c.index
-           << ", \"color\": \"" << c.hex_color << "\", \"rgb\": ["
+        js << "      {\"name\": \"" << json_escape(c.name) << "\", \"index\": " << c.index
+           << ", \"color\": \"" << json_escape(c.hex_color) << "\", \"rgb\": ["
            << static_cast<int>(c.rgb[0]) << ", " << static_cast<int>(c.rgb[1]) << ", " << static_cast<int>(c.rgb[2]) << "]}"
            << (i + 1 < result.palette.classes.size() ? ",\n" : "\n");
     }
     js << "    ],\n"
-       << "    \"uncertain\": {\"name\": \"" << result.palette.uncertain.name << "\", \"color\": \"" << result.palette.uncertain.hex_color
+       << "    \"uncertain\": {\"name\": \"" << json_escape(result.palette.uncertain.name) << "\", \"color\": \"" << json_escape(result.palette.uncertain.hex_color)
        << "\", \"rgb\": [" << static_cast<int>(result.palette.uncertain.rgb[0]) << ", "
        << static_cast<int>(result.palette.uncertain.rgb[1]) << ", "
        << static_cast<int>(result.palette.uncertain.rgb[2]) << "]}\n"
        << "  },\n"
        << "  \"geospatial\": {\n"
        << "    \"available\": " << (result.metadata.has_geo ? "true" : "false") << ",\n"
-       << "    \"crs\": " << (result.metadata.has_geo ? ("\"" + result.metadata.crs + "\"") : "null") << ",\n"
+       << "    \"crs\": " << (result.metadata.has_geo ? ("\"" + json_escape(result.metadata.crs) + "\"") : "null") << ",\n"
        << "    \"geotransform\": ["
        << result.metadata.geotransform[0] << ", " << result.metadata.geotransform[1] << ", "
        << result.metadata.geotransform[2] << ", " << result.metadata.geotransform[3] << ", "
        << result.metadata.geotransform[4] << ", " << result.metadata.geotransform[5] << "],\n"
        << "    \"class_codes\": {\n";
     for (std::size_t i = 0; i < model.class_names.size(); ++i) {
-        js << "      \"" << i << "\": \"" << model.class_names[i] << "\",\n";
+        js << "      \"" << i << "\": \"" << json_escape(model.class_names[i]) << "\",\n";
     }
     js << "      \"254\": \"UNCERTAIN\",\n"
        << "      \"255\": \"NODATA\"\n"
        << "    }\n"
+       << "  },\n"
+       << "  \"h3\": {\n"
+       << "    \"available\": " << (result.metadata.has_geo && h3_aggregation_available() ? "true" : "false") << ",\n"
+       << "    \"implementation\": \"" << (h3_available() ? "OFFICIAL_H3" : "UNAVAILABLE") << "\",\n"
+       << "    \"resolution\": " << (result.metadata.has_geo && h3_aggregation_available() ? "9" : "null") << "\n"
        << "  },\n"
        << "  \"summary\": {\n"
        << "    \"total_decisions\": " << result.total_decisions << ",\n"
@@ -638,7 +668,7 @@ void export_dense_map(const DenseMapResult& result,
        << "    \"class_counts\": {\n";
     std::size_t c_idx = 0;
     for (const auto& [name, count] : class_counts) {
-        js << "      \"" << name << "\": " << count << (++c_idx < class_counts.size() ? ",\n" : "\n");
+        js << "      \"" << json_escape(name) << "\": " << count << (++c_idx < class_counts.size() ? ",\n" : "\n");
     }
     js << "    }\n"
        << "  }\n"
@@ -750,6 +780,13 @@ void export_dense_map(const DenseMapResult& result,
         write_geotiff_raster(output_dir / "margin.tif", geo_margin.data(), geo_margin.size() * sizeof(float),
                              result.grid_width, result.grid_height, GeoRasterType::float32,
                              result.metadata, result.config.stride);
+
+        if (h3_aggregation_available()) {
+            const auto aggregates = aggregate_dense_run_h3(
+                result, 9, output_dir.filename().string(), model_sha);
+            export_h3_aggregation_csv(aggregates, model.class_names,
+                                      output_dir / "classification_h3.csv");
+        }
     }
 }
 
