@@ -90,6 +90,10 @@ add_executable(h3_test tests/h3_test.cpp)
 target_link_libraries(h3_test PRIVATE tinyvision_application)
 add_test(NAME h3_test COMMAND h3_test)
 
+add_executable(ablation_protocol_test tests/ablation_protocol_test.cpp)
+target_link_libraries(ablation_protocol_test PRIVATE tinyvision_application)
+add_test(NAME ablation_protocol_test COMMAND ablation_protocol_test)
+
 add_executable(training_test tests/training_test.cpp)
 target_link_libraries(training_test PRIVATE tinyvision_core)
 add_test(NAME training_test COMMAND training_test)
