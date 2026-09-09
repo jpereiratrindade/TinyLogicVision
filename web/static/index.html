@@ -488,18 +488,94 @@
           <span class="badge-version">Tiled Streaming Engine</span>
         </div>
 
+        <!-- Source Scene Selection for Dense Classification -->
+        <div class="dense-source-selection-card">
+          <div class="dense-src-header">
+            <span class="dense-src-title">🛰️ Imagem / Cena para Classificação & Mapeamento:</span>
+            <div class="source-mode-tabs" id="dense-source-mode-tabs">
+              <button type="button" class="source-mode-btn active" data-dense-src="active">⭐ Cena Ativa</button>
+              <button type="button" class="source-mode-btn" data-dense-src="folder">📁 Pasta Sentinel (.SAFE)</button>
+              <button type="button" class="source-mode-btn" data-dense-src="multi">🗂️ Múltiplos Arquivos / Bandas</button>
+              <button type="button" class="source-mode-btn" data-dense-src="single">🖼️ Arquivo Único</button>
+              <button type="button" class="source-mode-btn" data-dense-src="path">💻 Caminho Local</button>
+            </div>
+          </div>
+
+          <!-- Mode Active Scene -->
+          <div id="dense-src-panel-active" class="dense-src-panel">
+            <div class="flex-row-gap">
+              <select id="dense-select-image" class="input-select" style="flex: 1;"></select>
+            </div>
+          </div>
+
+          <!-- Mode Folder .SAFE -->
+          <div id="dense-src-panel-folder" class="dense-src-panel hidden">
+            <p class="help-text">Selecione a pasta Sentinel descompactada (diretório <code>.SAFE</code> ou pasta <code>R10m</code> contendo as bandas 10m):</p>
+            <div class="flex-row-gap">
+              <input type="file" id="dense-folder-input" webkitdirectory directory multiple hidden>
+              <button id="btn-dense-select-folder" class="btn btn-sm btn-outline">📂 Selecionar Pasta do Computador</button>
+              <input type="text" id="dense-folder-path-input" placeholder="Ou cole o caminho no servidor: /caminho/.../R10m" class="input-text input-sm" style="flex: 1;">
+              <button id="btn-dense-open-folder-path" class="btn btn-sm btn-primary">Abrir Pasta</button>
+            </div>
+          </div>
+
+          <!-- Mode Multiple Images / 4 Bands -->
+          <div id="dense-src-panel-multi" class="dense-src-panel hidden">
+            <p class="help-text">Selecione múltiplos arquivos (.jp2, .tif, .png) ou informe os arquivos das 4 bandas 10m:</p>
+            <div class="flex-row-gap" style="margin-bottom: 8px;">
+              <input type="file" id="dense-multi-files-input" accept=".jp2,.j2k,.tif,.tiff,.png,.jpg" multiple hidden>
+              <button id="btn-dense-select-multi" class="btn btn-sm btn-outline">🗂️ Selecionar Múltiplos Arquivos do Computador</button>
+              <span id="dense-multi-count" class="text-dim">Nenhum arquivo selecionado</span>
+            </div>
+            <div class="band-file-grid">
+              <div class="band-file-field">
+                <label>B2 (Azul - 490 nm):</label>
+                <input type="file" id="dense-band-file-b2" accept=".jp2,.j2k,.tif,.tiff" class="input-file input-xs">
+                <input type="text" id="dense-band-path-b2" placeholder="Caminho B02_10m..." class="input-text input-xs" style="margin-top: 2px;">
+              </div>
+              <div class="band-file-field">
+                <label>B3 (Verde - 560 nm):</label>
+                <input type="file" id="dense-band-file-b3" accept=".jp2,.j2k,.tif,.tiff" class="input-file input-xs">
+                <input type="text" id="dense-band-path-b3" placeholder="Caminho B03_10m..." class="input-text input-xs" style="margin-top: 2px;">
+              </div>
+              <div class="band-file-field">
+                <label>B4 (Vermelho - 665 nm):</label>
+                <input type="file" id="dense-band-file-b4" accept=".jp2,.j2k,.tif,.tiff" class="input-file input-xs">
+                <input type="text" id="dense-band-path-b4" placeholder="Caminho B04_10m..." class="input-text input-xs" style="margin-top: 2px;">
+              </div>
+              <div class="band-file-field">
+                <label>B8 (NIR - 842 nm):</label>
+                <input type="file" id="dense-band-file-b8" accept=".jp2,.j2k,.tif,.tiff" class="input-file input-xs">
+                <input type="text" id="dense-band-path-b8" placeholder="Caminho B08_10m..." class="input-text input-xs" style="margin-top: 2px;">
+              </div>
+            </div>
+            <button id="btn-dense-load-4-bands" class="btn btn-sm btn-primary btn-block" style="margin-top: 6px;">
+              ⚡ Carregar Conjunto de 4 Bandas para Classificação
+            </button>
+          </div>
+
+          <!-- Mode Single File -->
+          <div id="dense-src-panel-single" class="dense-src-panel hidden">
+            <div class="flex-row-gap">
+              <input type="file" id="dense-file-input" accept="image/png,image/jpeg,image/tiff,.tif,.tiff,.jp2,.j2k,image/jp2" hidden>
+              <button id="btn-dense-upload" class="btn btn-sm btn-outline">📂 Carregar Imagem Única</button>
+              <span id="dense-single-file-name" class="text-dim">Nenhum arquivo carregado</span>
+            </div>
+          </div>
+
+          <!-- Mode Local Path -->
+          <div id="dense-src-panel-path" class="dense-src-panel hidden">
+            <div class="path-input-row">
+              <input type="text" id="dense-server-path-input" placeholder="Digite o caminho absoluto no disco: /home/.../cena.tif ou /pasta_safe" class="input-text input-sm" style="flex: 1;">
+              <button id="btn-dense-open-server-path" class="btn btn-sm btn-primary">Abrir Caminho</button>
+            </div>
+          </div>
+        </div>
+
         <div class="dense-controls-grid">
           <div class="form-col">
             <label>Modelo (.tlv):</label>
             <select id="dense-select-model" class="input-select"></select>
-          </div>
-          <div class="form-col">
-            <label>Imagem / Cena Fonte:</label>
-            <div class="flex-row-gap">
-              <select id="dense-select-image" class="input-select"></select>
-              <input type="file" id="dense-file-input" accept="image/png,image/jpeg,image/tiff,.tif,.tiff,.jp2,.j2k,image/jp2" hidden>
-              <button id="btn-dense-upload" class="btn btn-sm btn-outline">📂 Carregar</button>
-            </div>
           </div>
           <div class="form-col">
             <label>Espaçamento (Stride):</label>

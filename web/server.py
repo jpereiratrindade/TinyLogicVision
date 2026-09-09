@@ -1095,6 +1095,11 @@ class TinyVisionRequestHandler(http.server.BaseHTTPRequestHandler):
             "overlay.png": "image/png",
             "run.json": "application/json",
             "classification.csv": "text/csv; charset=utf-8",
+            "class_map.tif": "image/tiff",
+            "confidence.tif": "image/tiff",
+            "provenance.json": "application/json",
+            "decisions.bin": "application/octet-stream",
+            "classification_h3.csv": "text/csv; charset=utf-8",
         }
         if filename not in allowed:
             self.send_error_json("Artifact not allowed or not found", 404)

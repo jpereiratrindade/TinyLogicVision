@@ -877,7 +877,36 @@ body {
   display: flex;
   flex-direction: column;
   gap: 16px;
-  margin-bottom: 20px;
+.dense-source-selection-card {
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.dense-src-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  border-bottom: 1px solid var(--border-color);
+  padding-bottom: 8px;
+}
+
+.dense-src-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-main);
+}
+
+.dense-src-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
 .dense-controls-grid {

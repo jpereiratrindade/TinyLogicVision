@@ -1209,23 +1209,294 @@ function setupDenseMap() {
     el.denseValMargin.textContent = parseFloat(e.target.value).toFixed(2);
   });
 
-  el.btnDenseUpload.addEventListener('click', () => el.denseFileInput.click());
-  el.denseFileInput.addEventListener('change', async (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    const formData = new FormData();
-    formData.append('file', file);
-    try {
-      const res = await fetch('/api/upload', { method: 'POST', body: formData });
-      const data = await res.json();
-      if (data.success) {
-        refreshWorkspaceStatus();
-        el.denseSelectImage.value = data.path;
-      }
-    } catch (err) {
-      alert('Erro no upload');
-    }
+  // Dense Map Source Selection Tabs
+  const denseSrcTabs = document.querySelectorAll('#dense-source-mode-tabs .source-mode-btn');
+  const denseSrcPanels = {
+    active: document.getElementById('dense-src-panel-active'),
+    folder: document.getElementById('dense-src-panel-folder'),
+    multi: document.getElementById('dense-src-panel-multi'),
+    single: document.getElementById('dense-src-panel-single'),
+    path: document.getElementById('dense-src-panel-path'),
+  };
+
+  denseSrcTabs.forEach((tab) => {
+    tab.addEventListener('click', () => {
+      const mode = tab.dataset.denseSrc;
+      denseSrcTabs.forEach((t) => t.classList.remove('active'));
+      tab.classList.add('active');
+      Object.entries(denseSrcPanels).forEach(([key, panel]) => {
+        if (panel) {
+          if (key === mode) panel.classList.remove('hidden');
+          else panel.classList.add('hidden');
+        }
+      });
+    });
   });
+
+  // 1. Folder .SAFE loading for Tab 3
+  const denseFolderInput = document.getElementById('dense-folder-input');
+  const btnDenseSelectFolder = document.getElementById('btn-dense-select-folder');
+  const denseFolderPathInput = document.getElementById('dense-folder-path-input');
+  const btnDenseOpenFolderPath = document.getElementById('btn-dense-open-folder-path');
+
+  if (btnDenseSelectFolder && denseFolderInput) {
+    btnDenseSelectFolder.addEventListener('click', () => denseFolderInput.click());
+    denseFolderInput.addEventListener('change', async (e) => {
+      const allFiles = Array.from(e.target.files);
+      if (allFiles.length === 0) return;
+      btnDenseSelectFolder.textContent = 'Localizando bandas 10m...';
+      btnDenseSelectFolder.disabled = true;
+
+      try {
+        const isNot20_60 = (f) => !/(20m|60m)/i.test(f.webkitRelativePath || f.name);
+        const b2File = allFiles.find((f) => /(^|[_.-])(B02|B2|B02_10m|B2_10m)\.(jp2|tif|tiff)$/i.test(f.name) && isNot20_60(f));
+        const b3File = allFiles.find((f) => /(^|[_.-])(B03|B3|B03_10m|B3_10m)\.(jp2|tif|tiff)$/i.test(f.name) && isNot20_60(f));
+        const b4File = allFiles.find((f) => /(^|[_.-])(B04|B4|B04_10m|B4_10m)\.(jp2|tif|tiff)$/i.test(f.name) && isNot20_60(f));
+        const b8File = allFiles.find((f) => /(^|[_.-])(B08|B8|B08_10m|B8_10m)\.(jp2|tif|tiff)$/i.test(f.name) && isNot20_60(f));
+        const tciFile = allFiles.find((f) => /(^|[_.-])(TCI|TCI_10m)\.(jp2|tif|tiff)$/i.test(f.name) && isNot20_60(f));
+
+        if (!b2File || !b3File || !b4File || !b8File) {
+          throw new Error('Não foram encontradas todas as 4 bandas de 10m (B02, B03, B04, B08) na pasta selecionada.');
+        }
+
+        btnDenseSelectFolder.textContent = 'Enviando 4 bandas 10m...';
+        const formData = new FormData();
+        formData.append('file_b2', b2File, b2File.name);
+        formData.append('file_b3', b3File, b3File.name);
+        formData.append('file_b4', b4File, b4File.name);
+        formData.append('file_b8', b8File, b8File.name);
+        if (tciFile) formData.append('file_tci', tciFile, tciFile.name);
+
+        const upRes = await fetch('/api/upload', { method: 'POST', body: formData });
+        const upData = await upRes.json();
+        if (!upData.success) throw new Error(upData.error || 'Erro no upload das bandas');
+
+        const savedFiles = upData.files || [upData];
+        const findSaved = (re) => {
+          const m = savedFiles.find((f) => re.test(f.original_name || f.filename));
+          return m ? m.path : null;
+        };
+
+        const p2 = findSaved(/(^|[_.-])(B02|B2|B02_10m|B2_10m)\./i);
+        const p3 = findSaved(/(^|[_.-])(B03|B3|B03_10m|B3_10m)\./i);
+        const p4 = findSaved(/(^|[_.-])(B04|B4|B04_10m|B4_10m)\./i);
+        const p8 = findSaved(/(^|[_.-])(B08|B8|B08_10m|B8_10m)\./i);
+
+        if (p2 && p3 && p4 && p8) {
+          const sRes = await fetch('/api/sentinel/open', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ bands: { b2: p2, b3: p3, b4: p4, b8: p8 } }),
+          });
+          const sData = await sRes.json();
+          if (sData.success) {
+            applySentinelDescriptor(sData);
+            alert('Pasta Sentinel carregada com sucesso para classificação!');
+            return;
+          }
+        }
+        handleLoadedSource(upData);
+      } catch (err) {
+        alert(`Erro ao abrir pasta Sentinel: ${err.message}`);
+      } finally {
+        btnDenseSelectFolder.textContent = '📂 Selecionar Pasta do Computador';
+        btnDenseSelectFolder.disabled = false;
+      }
+    });
+  }
+
+  if (btnDenseOpenFolderPath && denseFolderPathInput) {
+    btnDenseOpenFolderPath.addEventListener('click', async () => {
+      const folderPath = denseFolderPathInput.value.trim();
+      if (!folderPath) {
+        alert('Digite ou cole o caminho da pasta Sentinel (.SAFE ou R10m)');
+        return;
+      }
+      btnDenseOpenFolderPath.disabled = true;
+      btnDenseOpenFolderPath.textContent = 'Abrindo...';
+      try {
+        const res = await fetch('/api/sentinel/open', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ folder_path: folderPath }),
+        });
+        const data = await res.json();
+        if (!data.success) throw new Error(data.error || 'Erro ao abrir pasta');
+        applySentinelDescriptor(data);
+        alert('Pasta Sentinel aberta com sucesso para classificação!');
+      } catch (err) {
+        alert(`Erro ao abrir pasta Sentinel: ${err.message}`);
+      } finally {
+        btnDenseOpenFolderPath.disabled = false;
+        btnDenseOpenFolderPath.textContent = 'Abrir Pasta';
+      }
+    });
+  }
+
+  // 2. Multiple Images / 4 Bands for Tab 3
+  const denseMultiFilesInput = document.getElementById('dense-multi-files-input');
+  const btnDenseSelectMulti = document.getElementById('btn-dense-select-multi');
+  const denseMultiCount = document.getElementById('dense-multi-count');
+  const btnDenseLoad4Bands = document.getElementById('btn-dense-load-4-bands');
+
+  if (btnDenseSelectMulti && denseMultiFilesInput) {
+    btnDenseSelectMulti.addEventListener('click', () => denseMultiFilesInput.click());
+    denseMultiFilesInput.addEventListener('change', async (e) => {
+      const files = Array.from(e.target.files);
+      if (files.length === 0) return;
+      if (denseMultiCount) denseMultiCount.textContent = `${files.length} arquivos selecionados`;
+
+      btnDenseSelectMulti.textContent = 'Enviando arquivos...';
+      btnDenseSelectMulti.disabled = true;
+
+      try {
+        const formData = new FormData();
+        files.forEach((f, idx) => formData.append(`file_${idx}`, f, f.name));
+
+        const res = await fetch('/api/upload', { method: 'POST', body: formData });
+        const data = await res.json();
+        if (!data.success) throw new Error(data.error || 'Erro no upload');
+
+        const savedFiles = data.files || [data];
+        const findSaved = (re) => {
+          const m = savedFiles.find((f) => re.test(f.original_name || f.filename));
+          return m ? m.path : null;
+        };
+
+        const p2 = findSaved(/(^|[_.-])(B02|B2|B02_10m|B2_10m)\./i);
+        const p3 = findSaved(/(^|[_.-])(B03|B3|B03_10m|B3_10m)\./i);
+        const p4 = findSaved(/(^|[_.-])(B04|B4|B04_10m|B4_10m)\./i);
+        const p8 = findSaved(/(^|[_.-])(B08|B8|B08_10m|B8_10m)\./i);
+
+        if (p2 && p3 && p4 && p8) {
+          const sRes = await fetch('/api/sentinel/open', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ bands: { b2: p2, b3: p3, b4: p4, b8: p8 } }),
+          });
+          const sData = await sRes.json();
+          if (sData.success) {
+            applySentinelDescriptor(sData);
+            alert('Conjunto de 4 bandas Sentinel 10m carregado com sucesso!');
+            return;
+          }
+        }
+        handleLoadedSource(savedFiles[0]);
+        alert(`${files.length} arquivos carregados. Imagem principal selecionada para classificação.`);
+      } catch (err) {
+        alert(`Erro ao processar múltiplos arquivos: ${err.message}`);
+      } finally {
+        btnDenseSelectMulti.textContent = '🗂️ Selecionar Múltiplos Arquivos do Computador';
+        btnDenseSelectMulti.disabled = false;
+      }
+    });
+  }
+
+  if (btnDenseLoad4Bands) {
+    btnDenseLoad4Bands.addEventListener('click', async () => {
+      const b2File = document.getElementById('dense-band-file-b2')?.files[0];
+      const b3File = document.getElementById('dense-band-file-b3')?.files[0];
+      const b4File = document.getElementById('dense-band-file-b4')?.files[0];
+      const b8File = document.getElementById('dense-band-file-b8')?.files[0];
+      const p2Val = document.getElementById('dense-band-path-b2')?.value.trim();
+      const p3Val = document.getElementById('dense-band-path-b3')?.value.trim();
+      const p4Val = document.getElementById('dense-band-path-b4')?.value.trim();
+      const p8Val = document.getElementById('dense-band-path-b8')?.value.trim();
+
+      btnDenseLoad4Bands.disabled = true;
+      btnDenseLoad4Bands.textContent = 'Processando 4 bandas...';
+
+      try {
+        let p2 = p2Val, p3 = p3Val, p4 = p4Val, p8 = p8Val;
+        if (b2File && b3File && b4File && b8File) {
+          const formData = new FormData();
+          formData.append('b2', b2File, b2File.name);
+          formData.append('b3', b3File, b3File.name);
+          formData.append('b4', b4File, b4File.name);
+          formData.append('b8', b8File, b8File.name);
+          const upRes = await fetch('/api/upload', { method: 'POST', body: formData });
+          const upData = await upRes.json();
+          if (!upData.success) throw new Error(upData.error || 'Erro no upload das bandas');
+          const saved = upData.files || [upData];
+          p2 = saved.find((f) => f.original_name === b2File.name)?.path;
+          p3 = saved.find((f) => f.original_name === b3File.name)?.path;
+          p4 = saved.find((f) => f.original_name === b4File.name)?.path;
+          p8 = saved.find((f) => f.original_name === b8File.name)?.path;
+        }
+
+        if (!p2 || !p3 || !p4 || !p8) {
+          throw new Error('Especifique todos os 4 arquivos ou caminhos para B2, B3, B4 e B8.');
+        }
+
+        const res = await fetch('/api/sentinel/open', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ bands: { b2: p2, b3: p3, b4: p4, b8: p8 } }),
+        });
+        const data = await res.json();
+        if (!data.success) throw new Error(data.error || 'Erro ao abrir bandas');
+        applySentinelDescriptor(data);
+        alert('4 bandas Sentinel 10m carregadas com sucesso para classificação!');
+      } catch (err) {
+        alert(`Erro: ${err.message}`);
+      } finally {
+        btnDenseLoad4Bands.disabled = false;
+        btnDenseLoad4Bands.textContent = '⚡ Carregar Conjunto de 4 Bandas para Classificação';
+      }
+    });
+  }
+
+  // 3. Single File & Server Path for Tab 3
+  const denseSinglePathInput = document.getElementById('dense-server-path-input');
+  const btnDenseOpenServerPath = document.getElementById('btn-dense-open-server-path');
+  const denseSingleFileName = document.getElementById('dense-single-file-name');
+
+  if (el.btnDenseUpload) {
+    el.btnDenseUpload.addEventListener('click', () => el.denseFileInput.click());
+  }
+  if (el.denseFileInput) {
+    el.denseFileInput.addEventListener('change', async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      if (denseSingleFileName) denseSingleFileName.textContent = file.name;
+      const formData = new FormData();
+      formData.append('file', file);
+      try {
+        const res = await fetch('/api/upload', { method: 'POST', body: formData });
+        const data = await res.json();
+        if (data.success) {
+          handleLoadedSource(data);
+          alert(`Imagem '${file.name}' carregada para classificação!`);
+        }
+      } catch (err) {
+        alert('Erro no upload');
+      }
+    });
+  }
+
+  if (btnDenseOpenServerPath && denseSinglePathInput) {
+    btnDenseOpenServerPath.addEventListener('click', async () => {
+      const p = denseSinglePathInput.value.trim();
+      if (!p) return;
+      try {
+        const res = await fetch('/api/source/open_local', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ path: p }),
+        });
+        const data = await res.json();
+        if (!data.success) throw new Error(data.error || 'Erro ao abrir caminho');
+        if (data.modality === 'SENTINEL2_MULTIBAND') {
+          applySentinelDescriptor(data);
+        } else {
+          handleLoadedSource(data);
+        }
+        alert('Caminho aberto com sucesso para classificação!');
+      } catch (err) {
+        alert(err.message);
+      }
+    });
+  }
 
   el.btnRunDenseMap.addEventListener('click', async () => {
     const model = el.denseSelectModel.value;
