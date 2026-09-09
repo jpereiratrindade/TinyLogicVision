@@ -15,10 +15,24 @@ int main(int argc, char** argv) {
 
     try {
         auto model = tinyvision::load_application_model(argv[1]);
-        const auto input = tinyvision::resize_rgb_bilinear(
-            tinyvision::load_rgb_image(std::filesystem::path(argv[2])),
-            model.image_width,
-            model.image_height);
+        const std::filesystem::path sample_path(argv[2]);
+        std::vector<double> input;
+
+        if (tinyvision::is_tvp_file(sample_path)) {
+            tinyvision::InputSchema schema;
+            input = tinyvision::load_tvp_sample(sample_path, schema);
+            if (input.size() != model.schema.input_size()) {
+                throw std::invalid_argument("sample inputs (" + std::to_string(input.size()) +
+                                            ") do not match model input size (" +
+                                            std::to_string(model.schema.input_size()) + ")");
+            }
+        } else {
+            input = tinyvision::resize_rgb_bilinear(
+                tinyvision::load_rgb_image(sample_path),
+                model.image_width,
+                model.image_height);
+        }
+
         const auto probabilities = model.network.predict(input);
         const auto predicted = static_cast<std::size_t>(std::distance(
             probabilities.begin(), std::max_element(probabilities.begin(), probabilities.end())));

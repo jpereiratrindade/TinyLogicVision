@@ -579,9 +579,13 @@ function applySentinelDescriptor(data) {
   }
 
   // Geo metadata
-  el.geoMetaCard.classList.remove('hidden');
-  el.metaGeoCrs.textContent = data.crs || 'EPSG:32722 (WGS 84 / UTM 22S)';
-  el.metaGeoPixel.textContent = `${(data.pixel_size_m || 10).toFixed(2)} m × ${(data.pixel_size_m || 10).toFixed(2)} m`;
+  if (data.crs) {
+    el.geoMetaCard.classList.remove('hidden');
+    el.metaGeoCrs.textContent = data.crs;
+    el.metaGeoPixel.textContent = `${(data.pixel_size_m || 10).toFixed(2)} m × ${(data.pixel_size_m || 10).toFixed(2)} m`;
+  } else {
+    el.geoMetaCard.classList.add('hidden');
+  }
   el.chkSentinel10m.checked = true;
   el.denseChkSentinel10m.checked = true;
   updateSentinelBadges();
@@ -610,10 +614,10 @@ function handleLoadedSource(data) {
   el.metaSha.textContent = data.sha256;
   el.imageMeta.classList.remove('hidden');
 
-  if (data.filename.toLowerCase().includes('sentinel') || data.filename.toLowerCase().endsWith('.tif') || data.filename.toLowerCase().endsWith('.jp2')) {
+  if (data.crs) {
     el.geoMetaCard.classList.remove('hidden');
-    el.metaGeoCrs.textContent = 'EPSG:32722 (WGS 84 / UTM zone 22S)';
-    el.metaGeoPixel.textContent = '10.00 m × 10.00 m';
+    el.metaGeoCrs.textContent = data.crs;
+    el.metaGeoPixel.textContent = data.pixel_size_m ? `${data.pixel_size_m.toFixed(2)} m × ${data.pixel_size_m.toFixed(2)} m` : 'NOT_AVAILABLE';
     el.chkSentinel10m.checked = true;
     el.denseChkSentinel10m.checked = true;
     updateSentinelBadges();
@@ -741,12 +745,17 @@ function setupCanvasInteraction() {
     const { x, y } = getCanvasCoords(e);
     el.cursorCoords.textContent = `Pixel X: ${x} | Y: ${y}`;
 
-    if (el.chkSentinel10m.checked) {
-      const easting = 480000 + x * 10;
-      const northing = 7820000 - y * 10;
-      el.cursorGeoCoords.textContent = `UTM: ${easting} E, ${northing} N (10m)`;
+    if (state.sentinelDescriptor && state.sentinelDescriptor.geotransform && state.sentinelDescriptor.geotransform.length === 6) {
+      const gt = state.sentinelDescriptor.geotransform;
+      const scaleX = (state.sentinelDescriptor.width || el.canvas.width) / el.canvas.width;
+      const scaleY = (state.sentinelDescriptor.height || el.canvas.height) / el.canvas.height;
+      const natX = x * scaleX;
+      const natY = y * scaleY;
+      const easting = gt[0] + natX * gt[1] + natY * gt[2];
+      const northing = gt[3] + natX * gt[4] + natY * gt[5];
+      el.cursorGeoCoords.textContent = `Map: ${easting.toFixed(1)}, ${northing.toFixed(1)}`;
     } else {
-      el.cursorGeoCoords.textContent = 'Geo: -';
+      el.cursorGeoCoords.textContent = 'Geo: NOT_AVAILABLE';
     }
 
     if (state.isDrawing) {
@@ -974,6 +983,11 @@ function setupDatasetGeneration() {
       image_path: state.imagePath,
       is_sentinel_10m: el.chkSentinel10m.checked,
       patches: state.patches,
+      bands: (state.modality === 'SENTINEL2_MULTIBAND' && state.sentinelDescriptor) ? state.sentinelDescriptor.bands : null,
+      preview_width: el.canvas ? el.canvas.width : (state.sentinelDescriptor ? state.sentinelDescriptor.preview_width : null),
+      preview_height: el.canvas ? el.canvas.height : (state.sentinelDescriptor ? state.sentinelDescriptor.preview_height : null),
+      native_width: state.sentinelDescriptor ? state.sentinelDescriptor.width : null,
+      native_height: state.sentinelDescriptor ? state.sentinelDescriptor.height : null,
     };
 
     try {
@@ -1341,12 +1355,18 @@ function renderDenseMapResults(runId, metadata) {
       el.inspOrigin.textContent = `(${d.origin_x}, ${d.origin_y})`;
       el.inspCenter.textContent = `(${d.center_x}, ${d.center_y})`;
 
-      const stride = metadata.stride || 1;
-      const easting = 480000 + parseFloat(d.center_x) * 10;
-      const northing = 7820000 - parseFloat(d.center_y) * 10;
-      el.inspMapCoords.textContent = `X: ${easting.toFixed(1)} | Y: ${northing.toFixed(1)}`;
-      el.inspLatLon.textContent = `Lat: -15.78912 | Lon: -47.88231`;
-      el.inspH3Index.textContent = `88800262c5fffff (Res 8)`;
+      if (metadata.geotransform && metadata.geotransform.length === 6) {
+        const gt = metadata.geotransform;
+        const cx = parseFloat(d.center_x);
+        const cy = parseFloat(d.center_y);
+        const mapX = gt[0] + cx * gt[1] + cy * gt[2];
+        const mapY = gt[3] + cx * gt[4] + cy * gt[5];
+        el.inspMapCoords.textContent = `X: ${mapX.toFixed(1)} | Y: ${mapY.toFixed(1)}`;
+      } else {
+        el.inspMapCoords.textContent = 'NOT_AVAILABLE';
+      }
+      el.inspLatLon.textContent = metadata.crs ? metadata.crs.slice(0, 30) : 'NOT_AVAILABLE';
+      el.inspH3Index.textContent = metadata.h3_resolution !== undefined ? `Res ${metadata.h3_resolution}` : 'NOT_AVAILABLE';
 
       el.inspTop1Class.textContent = d.predicted_class || '-';
       el.inspTop1Prob.textContent = d.probability || '-';

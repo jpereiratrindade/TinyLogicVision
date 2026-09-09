@@ -145,6 +145,25 @@ def read_band_2d(image_path: Path, max_dim: int = 2048):
     return 0, 0, None, 0, 0
 
 
+def save_tvp_patch(values_float: list or bytes, width: int, height: int, channels: int, output_path: Path):
+    """Save multichannel patch as TVP (TinyLogicVision Patch) binary format."""
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    import struct
+    import numpy as np
+
+    hdr = struct.pack("<8sIHHHH", b"TLV_PAT\x00", 1, width, height, channels, 1) # dtype 1 = float32
+    if isinstance(values_float, (list, tuple)):
+        raw_floats = np.array(values_float, dtype=np.float32).tobytes()
+    elif isinstance(values_float, np.ndarray):
+        raw_floats = values_float.astype(np.float32).tobytes()
+    else:
+        raw_floats = bytes(values_float)
+
+    with open(output_path, "wb") as f:
+        f.write(hdr)
+        f.write(raw_floats)
+
+
 def save_png_patch(pixels_rgb: bytes, width: int, height: int, output_path: Path):
     """Save raw RGB pixels as PNG. Uses PIL if available or pure standard library."""
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -309,7 +328,7 @@ class TinyVisionRequestHandler(http.server.BaseHTTPRequestHandler):
             self.handle_api_evaluate()
         elif path == "/api/jobs":
             self.handle_api_create_job()
-        elif path == "/api/sentinel/open":
+        elif path in ("/api/sentinel/open", "/api/source/sentinel_open"):
             self.handle_api_sentinel_open()
         elif path == "/api/source/open_local":
             self.handle_api_source_open_local()
@@ -567,7 +586,37 @@ class TinyVisionRequestHandler(http.server.BaseHTTPRequestHandler):
         patch_records = []
         timestamp = datetime.datetime.now(datetime.timezone.utc).isoformat()
 
+        bands_input = req.get("bands", {}) or {}
+        normalized_bands = {}
+        if isinstance(bands_input, dict):
+            for b_key in ("b2", "b3", "b4", "b8"):
+                val = bands_input.get(b_key)
+                if isinstance(val, dict):
+                    normalized_bands[b_key] = val.get("path", "")
+                elif isinstance(val, str):
+                    normalized_bands[b_key] = val
+                else:
+                    normalized_bands[b_key] = ""
 
+        has_sentinel_bands = is_sentinel_10m and bool(normalized_bands) and all(Path(normalized_bands.get(b, "")).is_file() for b in ("b2", "b3", "b4", "b8"))
+
+        preview_w = float(req.get("preview_width", w) or w)
+        preview_h = float(req.get("preview_height", h) or h)
+        native_w = float(req.get("native_width", w) or w)
+        native_h = float(req.get("native_height", h) or h)
+
+        scale_x = native_w / max(preview_w, 1.0)
+        scale_y = native_h / max(preview_h, 1.0)
+
+        ds_bands = {}
+        if has_sentinel_bands and HAS_GDAL:
+            try:
+                for b_key in ("b2", "b3", "b4", "b8"):
+                    ds_bands[b_key] = gdal.Open(str(Path(normalized_bands[b_key])))
+            except Exception:
+                ds_bands = {}
+
+        import numpy as np
         patch_index = 0
         for p in patches:
             cls_name = sanitize_name(p.get("class", "unclassified"))
@@ -582,18 +631,56 @@ class TinyVisionRequestHandler(http.server.BaseHTTPRequestHandler):
             if x < 0 or y < 0 or x + 8 > w or y + 8 > h:
                 continue
 
-            # Extract 8x8 pixels
-            patch_rgb = bytearray()
-            for py in range(y, y + 8):
-                row_start = (py * w + x) * 3
-                patch_rgb.extend(rgb_bytes[row_start : row_start + 8 * 3])
+            split_dir = dataset_dir / split / cls_name
+            split_dir.mkdir(parents=True, exist_ok=True)
 
-            patch_bytes = bytes(patch_rgb)
-            patch_sha = compute_sha256(patch_bytes)
-            patch_filename = f"patch_{patch_index:05d}_{patch_sha[:8]}.png"
-            patch_out_path = dataset_dir / split / cls_name / patch_filename
+            if has_sentinel_bands and ds_bands:
+                # 1. Reproject preview ROI coordinates to native 10m raster coordinates
+                nat_x = min(max(0, int(round(x * scale_x))), int(native_w) - 8)
+                nat_y = min(max(0, int(round(y * scale_y))), int(native_h) - 8)
 
-            save_png_patch(patch_bytes, 8, 8, patch_out_path)
+                # 2. Extract exact 8x8 pixels from native 10m Sentinel-2 bands
+                b2_arr = ds_bands["b2"].GetRasterBand(1).ReadAsArray(nat_x, nat_y, 8, 8).astype(np.float32) * 0.0001
+                b3_arr = ds_bands["b3"].GetRasterBand(1).ReadAsArray(nat_x, nat_y, 8, 8).astype(np.float32) * 0.0001
+                b4_arr = ds_bands["b4"].GetRasterBand(1).ReadAsArray(nat_x, nat_y, 8, 8).astype(np.float32) * 0.0001
+                b8_arr = ds_bands["b8"].GetRasterBand(1).ReadAsArray(nat_x, nat_y, 8, 8).astype(np.float32) * 0.0001
+
+                # 3. Interleaved 256 float32 values (8x8x4)
+                multichannel_8x8x4 = np.dstack([b2_arr, b3_arr, b4_arr, b8_arr]).astype(np.float32)
+                patch_raw_bytes = multichannel_8x8x4.tobytes()
+                patch_sha = compute_sha256(patch_raw_bytes)
+                patch_base = f"patch_{patch_index:05d}_{patch_sha[:8]}"
+
+                # Save .tvp (multichannel 256 inputs binary patch)
+                tvp_out_path = split_dir / f"{patch_base}.tvp"
+                save_tvp_patch(patch_raw_bytes, 8, 8, 4, tvp_out_path)
+
+                # Save .png (8x8 True Color composite for preview/inspection)
+                r_8u = np.clip(b4_arr * 2500.0, 0, 255).astype(np.uint8)
+                g_8u = np.clip(b3_arr * 2500.0, 0, 255).astype(np.uint8)
+                b_8u = np.clip(b2_arr * 2500.0, 0, 255).astype(np.uint8)
+                rgb_composite = np.dstack([r_8u, g_8u, b_8u]).tobytes()
+                png_out_path = split_dir / f"{patch_base}.png"
+                save_png_patch(rgb_composite, 8, 8, png_out_path)
+
+                patch_filename = f"{patch_base}.tvp"
+                patch_nat_x = nat_x
+                patch_nat_y = nat_y
+            else:
+                # Extract 8x8 pixels RGB
+                patch_rgb = bytearray()
+                for py in range(y, y + 8):
+                    row_start = (py * w + x) * 3
+                    patch_rgb.extend(rgb_bytes[row_start : row_start + 8 * 3])
+
+                patch_bytes = bytes(patch_rgb)
+                patch_sha = compute_sha256(patch_bytes)
+                patch_filename = f"patch_{patch_index:05d}_{patch_sha[:8]}.png"
+                patch_out_path = split_dir / patch_filename
+
+                save_png_patch(patch_bytes, 8, 8, patch_out_path)
+                patch_nat_x = x
+                patch_nat_y = y
 
             counts[split][cls_name] = counts[split].get(cls_name, 0) + 1
             patch_index += 1
@@ -602,15 +689,16 @@ class TinyVisionRequestHandler(http.server.BaseHTTPRequestHandler):
                 "dataset_id": dataset_name,
                 "source_image": str(image_path.name),
                 "source_sha256": source_sha256,
-                "source_width": w,
-                "source_height": h,
+                "source_width": int(native_w) if has_sentinel_bands else w,
+                "source_height": int(native_h) if has_sentinel_bands else h,
                 "is_sentinel_10m": is_sentinel_10m,
-                "resolution_note": "1px=10m (80x80m patch)" if is_sentinel_10m else "DISPLAY ONLY — no 10m guarantee",
+                "modality": "SENTINEL2_MULTIBAND (256 inputs)" if has_sentinel_bands else "RGB (192 inputs)",
+                "resolution_note": "1px=10m (80x80m native patch)" if has_sentinel_bands else "DISPLAY ONLY — no 10m guarantee",
                 "class": cls_name,
                 "split": split,
                 "roi_id": roi_id,
-                "patch_x": x,
-                "patch_y": y,
+                "patch_x": patch_nat_x,
+                "patch_y": patch_nat_y,
                 "patch_width": 8,
                 "patch_height": 8,
                 "patch_filename": patch_filename,
@@ -623,8 +711,8 @@ class TinyVisionRequestHandler(http.server.BaseHTTPRequestHandler):
                 "class": cls_name,
                 "split": split,
                 "roi_id": roi_id,
-                "x": x,
-                "y": y,
+                "x": patch_nat_x,
+                "y": patch_nat_y,
                 "sha256": patch_sha,
             })
 
@@ -632,12 +720,12 @@ class TinyVisionRequestHandler(http.server.BaseHTTPRequestHandler):
         manifest_path = dataset_dir / "manifest.csv"
         fieldnames = [
             "dataset_id", "source_image", "source_sha256", "source_width", "source_height",
-            "is_sentinel_10m", "resolution_note", "class", "split", "roi_id",
+            "is_sentinel_10m", "modality", "resolution_note", "class", "split", "roi_id",
             "patch_x", "patch_y", "patch_width", "patch_height", "patch_filename",
             "patch_sha256", "timestamp"
         ]
         with open(manifest_path, "w", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
             writer.writeheader()
             writer.writerows(manifest_rows)
 
@@ -1448,17 +1536,17 @@ class TinyVisionRequestHandler(http.server.BaseHTTPRequestHandler):
             else:
                 save_png_patch(ndvi_composite.tobytes(), pw, ph, preview_ndvi_path)
 
-            crs_desc = "EPSG:32722 (WGS 84 / UTM 22S) [Sentinel-2 10m]"
-            geo_transform = [480000.0, 10.0, 0.0, 7820000.0, 0.0, -10.0]
+            crs_desc = None
+            geo_transform = None
             if HAS_GDAL:
                 try:
                     ds = gdal.Open(str(b4_path))
                     if ds:
                         proj = ds.GetProjection()
                         gt = ds.GetGeoTransform()
-                        if proj:
+                        if proj and str(proj).strip():
                             crs_desc = str(proj)[:80]
-                        if gt:
+                        if gt and len(gt) == 6 and any(gt):
                             geo_transform = list(gt)
                 except Exception:
                     pass

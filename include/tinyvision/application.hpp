@@ -13,8 +13,12 @@ namespace tinyvision {
 
 struct ApplicationSample {
     std::vector<double> input;
-    std::size_t label{};
-    std::filesystem::path source;
+    std::size_t label{0};
+    std::filesystem::path source{};
+
+    ApplicationSample() = default;
+    ApplicationSample(std::vector<double> inp, std::size_t lbl, std::filesystem::path src = {})
+        : input(std::move(inp)), label(lbl), source(std::move(src)) {}
 };
 
 struct ApplicationSplit {
@@ -72,6 +76,9 @@ struct ApplicationTrainingResult {
                               ApplicationMetrics development_metrics,
                               std::vector<ApplicationEpoch> epoch_metrics);
 };
+
+bool is_tvp_file(const std::filesystem::path& path);
+std::vector<double> load_tvp_sample(const std::filesystem::path& path, InputSchema& out_schema);
 
 ApplicationSplit load_application_split(const std::filesystem::path& split_directory);
 ApplicationSplit load_application_split(const std::filesystem::path& split_directory,

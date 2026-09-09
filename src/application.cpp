@@ -13,7 +13,57 @@
 #include <stdexcept>
 #include <utility>
 
+#include <cstring>
+
 namespace tinyvision {
+
+bool is_tvp_file(const std::filesystem::path& path) {
+    auto extension = path.extension().string();
+    std::transform(extension.begin(), extension.end(), extension.begin(),
+                   [](unsigned char character) {
+                       return static_cast<char>(std::tolower(character));
+                   });
+    return extension == ".tvp" || extension == ".bin";
+}
+
+struct TvpHeader {
+    char magic[8]; // "TLV_PAT\x00"
+    std::uint32_t version;
+    std::uint16_t width;
+    std::uint16_t height;
+    std::uint16_t channels;
+    std::uint16_t dtype; // 1 = float32, 2 = uint16
+};
+
+std::vector<double> load_tvp_sample(const std::filesystem::path& path, InputSchema& out_schema) {
+    std::ifstream file(path, std::ios::binary);
+    if (!file) throw std::runtime_error("cannot open tvp patch: " + path.string());
+    TvpHeader hdr{};
+    file.read(reinterpret_cast<char*>(&hdr), sizeof(hdr));
+    if (!file || std::memcmp(hdr.magic, "TLV_PAT\x00", 8) != 0) {
+        throw std::runtime_error("invalid TVP magic in patch: " + path.string());
+    }
+    const std::size_t num_elements = static_cast<std::size_t>(hdr.width) * hdr.height * hdr.channels;
+    std::vector<double> values(num_elements);
+    if (hdr.dtype == 1) { // float32
+        std::vector<float> buf(num_elements);
+        file.read(reinterpret_cast<char*>(buf.data()), num_elements * sizeof(float));
+        for (std::size_t i = 0; i < num_elements; ++i) values[i] = static_cast<double>(buf[i]);
+    } else if (hdr.dtype == 2) { // uint16 raw reflectance (scaled by 0.0001)
+        std::vector<std::uint16_t> buf(num_elements);
+        file.read(reinterpret_cast<char*>(buf.data()), num_elements * sizeof(std::uint16_t));
+        for (std::size_t i = 0; i < num_elements; ++i) values[i] = static_cast<double>(buf[i]) * 0.0001;
+    } else {
+        throw std::runtime_error("unsupported TVP dtype in patch: " + path.string());
+    }
+    if (hdr.channels == 4) {
+        out_schema = InputSchema::create_sentinel2_10m(hdr.width, hdr.height);
+    } else if (hdr.channels == 3) {
+        out_schema = InputSchema::create_canonical_rgb(hdr.width, hdr.height);
+    }
+    return values;
+}
+
 namespace {
 
 constexpr std::size_t kImageWidth = 8;
@@ -47,14 +97,17 @@ std::vector<std::string> discover_classes(const std::filesystem::path& directory
     return classes;
 }
 
-std::vector<std::filesystem::path> class_images(const std::filesystem::path& directory) {
+std::vector<std::filesystem::path> class_patches(const std::filesystem::path& directory, bool prefer_tvp) {
     std::vector<std::filesystem::path> paths;
     for (const auto& entry : std::filesystem::directory_iterator(directory)) {
-        if (entry.is_regular_file() && supported_image(entry.path())) paths.push_back(entry.path());
+        if (entry.is_regular_file()) {
+            if (prefer_tvp && is_tvp_file(entry.path())) paths.push_back(entry.path());
+            else if (!prefer_tvp && supported_image(entry.path())) paths.push_back(entry.path());
+        }
     }
     std::sort(paths.begin(), paths.end());
     if (paths.empty()) {
-        throw std::invalid_argument("class contains no PNG/JPEG images: " + directory.string());
+        throw std::invalid_argument("class contains no valid patch files: " + directory.string());
     }
     return paths;
 }
@@ -106,19 +159,50 @@ ApplicationSplit load_application_split(const std::filesystem::path& split_direc
         throw std::invalid_argument("split class directories do not match the model classes");
     }
 
-    ApplicationSplit split;
-    split.class_names = class_names;
-    split.schema = InputSchema::create_canonical_rgb(kImageWidth, kImageHeight);
+    // Check if classes contain .tvp multichannel patches
+    bool has_tvp = false;
     for (std::size_t label = 0; label < class_names.size(); ++label) {
         const auto directory = split_directory / class_names[label];
-        for (const auto& path : class_images(directory)) {
-            split.samples.push_back({
-                resize_rgb_bilinear(load_rgb_image(path), kImageWidth, kImageHeight),
-                label,
-                path,
-            });
+        for (const auto& entry : std::filesystem::directory_iterator(directory)) {
+            if (entry.is_regular_file() && is_tvp_file(entry.path())) {
+                has_tvp = true;
+                break;
+            }
+        }
+        if (has_tvp) break;
+    }
+
+    ApplicationSplit split;
+    split.class_names = class_names;
+
+    if (has_tvp) {
+        for (std::size_t label = 0; label < class_names.size(); ++label) {
+            const auto directory = split_directory / class_names[label];
+            for (const auto& path : class_patches(directory, true)) {
+                InputSchema patch_schema;
+                auto sample_values = load_tvp_sample(path, patch_schema);
+                split.schema = patch_schema;
+                split.samples.push_back({
+                    std::move(sample_values),
+                    label,
+                    path,
+                });
+            }
+        }
+    } else {
+        split.schema = InputSchema::create_canonical_rgb(kImageWidth, kImageHeight);
+        for (std::size_t label = 0; label < class_names.size(); ++label) {
+            const auto directory = split_directory / class_names[label];
+            for (const auto& path : class_patches(directory, false)) {
+                split.samples.push_back({
+                    resize_rgb_bilinear(load_rgb_image(path), kImageWidth, kImageHeight),
+                    label,
+                    path,
+                });
+            }
         }
     }
+
     return split;
 }
 

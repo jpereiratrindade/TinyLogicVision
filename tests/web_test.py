@@ -449,6 +449,138 @@ def main():
             if async_model.exists():
                 async_model.unlink()
 
+            # 9. Test Sentinel-2 Multiband 10m (B2, B3, B4, B8) Native 256-input Pipeline
+            print("Testing Sentinel-2 4-band native 256-input pipeline (.tvp datasets, 256->24->3 MLP)...")
+            try:
+                import numpy as np
+                from osgeo import gdal
+                s2_dir = Path(tmp_dir) / "sentinel_bands"
+                s2_dir.mkdir(parents=True, exist_ok=True)
+                bands_map = {}
+                # Create 32x32 synthetic uint16 Sentinel bands
+                for b_name, base_val in [("B02_10m", 800), ("B03_10m", 1200), ("B04_10m", 900), ("B08_10m", 3600)]:
+                    b_path = s2_dir / f"{b_name}.tif"
+                    drv = gdal.GetDriverByName("GTiff")
+                    ds = drv.Create(str(b_path), 32, 32, 1, gdal.GDT_UInt16)
+                    # Fill top 1/3 with vegetation (high NIR), bottom with soil (low NIR)
+                    arr = np.full((32, 32), base_val, dtype=np.uint16)
+                    if "B08" in b_name:
+                        arr[16:, :] = 600
+                    ds.GetRasterBand(1).WriteArray(arr)
+                    ds.FlushCache()
+                    ds = None
+                    key = "b2" if "B02" in b_name else ("b3" if "B03" in b_name else ("b4" if "B04" in b_name else "b8"))
+                    bands_map[key] = str(b_path)
+
+                # Open 4 bands via API
+                open_s2_payload = json.dumps({"bands": bands_map}).encode("utf-8")
+                req_s2 = urllib.request.Request(
+                    f"{base_url}/api/source/sentinel_open",
+                    data=open_s2_payload,
+                    headers={"Content-Type": "application/json"},
+                    method="POST"
+                )
+                with urllib.request.urlopen(req_s2) as res:
+                    assert res.status == 200
+                    s2_desc = json.loads(res.read().decode("utf-8"))
+                    assert s2_desc["success"] is True
+                    assert s2_desc["modality"] == "SENTINEL2_MULTIBAND"
+                    assert s2_desc["is_sentinel_10m"] is True
+                    assert "previews" in s2_desc
+                    assert "true_color" in s2_desc["previews"]
+                    assert "false_color_nir" in s2_desc["previews"]
+
+                # Extract .tvp 256-input patches
+                s2_dataset_name = f"s2_ds_{int(time.time())}"
+                s2_patches = [
+                    {"roi_id": "roi_veg_tr", "class": "vegetacao", "split": "train", "x": 0, "y": 0},
+                    {"roi_id": "roi_veg_tr", "class": "vegetacao", "split": "train", "x": 8, "y": 0},
+                    {"roi_id": "roi_veg_dev", "class": "vegetacao", "split": "dev", "x": 16, "y": 0},
+                    {"roi_id": "roi_veg_pr", "class": "vegetacao", "split": "probe", "x": 24, "y": 0},
+                    {"roi_id": "roi_soil_tr", "class": "solo", "split": "train", "x": 0, "y": 20},
+                    {"roi_id": "roi_soil_tr", "class": "solo", "split": "train", "x": 8, "y": 20},
+                    {"roi_id": "roi_soil_dev", "class": "solo", "split": "dev", "x": 16, "y": 20},
+                    {"roi_id": "roi_soil_pr", "class": "solo", "split": "probe", "x": 24, "y": 20},
+                ]
+                create_s2_payload = json.dumps({
+                    "dataset_name": s2_dataset_name,
+                    "image_path": bands_map["b4"],
+                    "is_sentinel_10m": True,
+                    "patches": s2_patches,
+                    "bands": bands_map,
+                    "preview_width": 32,
+                    "preview_height": 32,
+                    "native_width": 32,
+                    "native_height": 32,
+                }).encode("utf-8")
+
+                req = urllib.request.Request(
+                    f"{base_url}/api/datasets/create",
+                    data=create_s2_payload,
+                    headers={"Content-Type": "application/json"},
+                    method="POST"
+                )
+                with urllib.request.urlopen(req) as res:
+                    assert res.status == 200
+                    s2_ds_resp = json.loads(res.read().decode("utf-8"))
+                    assert s2_ds_resp["success"] is True
+                    assert s2_ds_resp["total_patches"] == 8
+
+                s2_ds_dir = REPO_ROOT / ".tinyvision" / "datasets" / s2_dataset_name
+                # Verify .tvp file format on disk
+                tvp_files = list((s2_ds_dir / "train" / "vegetacao").glob("*.tvp"))
+                assert len(tvp_files) == 2, f"Expected 2 .tvp files, found: {tvp_files}"
+                tvp_file = tvp_files[0]
+                assert tvp_file.stat().st_size == 20 + 8 * 8 * 4 * 4  # 1044 bytes (20-byte header + 1024-byte float32 payload)
+                with open(tvp_file, "rb") as f:
+                    magic = f.read(8)
+                    assert magic == b"TLV_PAT\x00"
+
+                # Train Sentinel-2 Model: 256 inputs -> 24 hidden -> 2 classes => 6218 params
+                s2_model_name = f"model_{s2_dataset_name}"
+                s2_train_payload = json.dumps({
+                    "dataset_name": s2_dataset_name,
+                    "model_name": s2_model_name
+                }).encode("utf-8")
+                req = urllib.request.Request(
+                    f"{base_url}/api/train",
+                    data=s2_train_payload,
+                    headers={"Content-Type": "application/json"},
+                    method="POST"
+                )
+                with urllib.request.urlopen(req) as res:
+                    assert res.status == 200
+                    s2_train_resp = json.loads(res.read().decode("utf-8"))
+                    assert s2_train_resp["success"] is True
+                    # 2 classes: (256+1)*24 + (24+1)*2 = 6168 + 50 = 6218 params
+                    assert s2_train_resp["parameter_count"] == 6218
+
+                # Classify .tvp patch via API
+                s2_classify_payload = json.dumps({
+                    "model_name": s2_model_name,
+                    "image_path": str(tvp_file)
+                }).encode("utf-8")
+                req = urllib.request.Request(
+                    f"{base_url}/api/classify",
+                    data=s2_classify_payload,
+                    headers={"Content-Type": "application/json"},
+                    method="POST"
+                )
+                with urllib.request.urlopen(req) as res:
+                    assert res.status == 200
+                    s2_cls_resp = json.loads(res.read().decode("utf-8"))
+                    assert s2_cls_resp["success"] is True
+                    assert s2_cls_resp["predicted"] in ("vegetacao", "solo")
+
+                # Clean up Sentinel-2 artifacts
+                shutil.rmtree(s2_ds_dir, ignore_errors=True)
+                s2_model_file = REPO_ROOT / ".tinyvision" / "models" / f"{s2_model_name}.tlv"
+                if s2_model_file.exists():
+                    s2_model_file.unlink()
+
+            except ImportError:
+                print("Note: osgeo.gdal or numpy not available in this test pass, skipping S2 multiband step")
+
         print("TinyLogicVision Web GUI test suite PASS")
 
     finally:
@@ -457,3 +589,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

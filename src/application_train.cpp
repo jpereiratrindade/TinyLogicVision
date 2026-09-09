@@ -33,8 +33,10 @@ int main(int argc, char** argv) {
         auto result = tinyvision::train_application(train, development, config);
 
         std::cout << "TinyLogicVision TV-APP-00 training\n"
-                  << "architecture=192->" << result.model.network.hidden_size() << "->"
+                  << "architecture=" << result.model.schema.input_size() << "->"
+                  << result.model.network.hidden_size() << "->"
                   << result.model.network.output_size() << '\n'
+                  << "modality=" << tinyvision::modality_to_string(result.model.schema.modality) << '\n'
                   << "classes=" << result.model.class_names.size()
                   << " train_samples=" << train.samples.size()
                   << " dev_samples=" << development.samples.size() << '\n'
