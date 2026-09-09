@@ -121,16 +121,18 @@ ApplicationMetrics evaluate_application(const MLP& model, const ApplicationSplit
     metrics.confusion.assign(split.class_names.size(),
                              std::vector<std::size_t>(split.class_names.size()));
     std::size_t correct = 0;
+    MLPWorkspace ws;
     for (const auto& sample : split.samples) {
         if (sample.label >= split.class_names.size()) {
             throw std::invalid_argument("sample label is outside class range");
         }
-        const auto probabilities = model.predict(sample.input);
+        model.forward_into(sample.input, ws);
+        const auto& probabilities = ws.probabilities;
         const auto predicted = static_cast<std::size_t>(std::distance(
             probabilities.begin(), std::max_element(probabilities.begin(), probabilities.end())));
         correct += predicted == sample.label ? 1 : 0;
         ++metrics.confusion[sample.label][predicted];
-        metrics.average_loss += model.loss(sample.input, sample.label);
+        metrics.average_loss += -std::log(std::clamp(probabilities[sample.label], 1e-12, 1.0));
         metrics.mean_true_probability += probabilities[sample.label];
     }
 
@@ -169,10 +171,11 @@ ApplicationTrainingResult train_application(const ApplicationSplit& train,
     std::shuffle(order.begin(), order.end(), order_rng);
 
     std::vector<ApplicationEpoch> milestones;
+    MLPWorkspace train_ws;
     for (std::size_t epoch = 1; epoch <= config.epochs; ++epoch) {
         for (const auto index : order) {
             const auto& sample = train.samples[index];
-            model.train_one(sample.input, sample.label, config.learning_rate);
+            model.train_one_inplace(sample.input, sample.label, config.learning_rate, train_ws);
         }
         if (is_milestone(epoch, config.epochs)) {
             milestones.push_back({epoch,

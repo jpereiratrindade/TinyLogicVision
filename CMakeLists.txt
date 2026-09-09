@@ -53,6 +53,10 @@ add_executable(gradient_test tests/gradient_test.cpp)
 target_link_libraries(gradient_test PRIVATE tinyvision_core)
 add_test(NAME gradient_test COMMAND gradient_test)
 
+add_executable(core_perf_test tests/core_perf_test.cpp)
+target_link_libraries(core_perf_test PRIVATE tinyvision_core)
+add_test(NAME core_perf_test COMMAND core_perf_test)
+
 add_executable(training_test tests/training_test.cpp)
 target_link_libraries(training_test PRIVATE tinyvision_core)
 add_test(NAME training_test COMMAND training_test)
