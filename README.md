@@ -27,7 +27,7 @@ ctest --test-dir build --output-on-failure
 ./build/tinyvision
 ```
 
-Expected gate:
+Expected TV-00 gate:
 
 - `gradient_test`: PASS
 - `training_test`: PASS with >= 98% training accuracy
@@ -36,3 +36,20 @@ Expected gate:
 TV-00 only proves that the explicit learning machinery is mathematically
 consistent and can fit controlled RGB spatial patterns. It does not establish
 generalization to natural images.
+
+## TV-01A — Generalization Observatory
+
+TV-01A preserves the TV-00 architecture, model seed, learning rate, epoch count,
+optimizer and training dataset. It adds a deterministic held-out validation
+trajectory with stronger RGB/noise variation and spatial shifts, plus explicit
+metrics for probability, margin, confusion, learning events and forgetting.
+
+Run the observational witness with:
+
+```bash
+./build/tinyvision_generalization
+```
+
+The test split is deliberately not evaluated in TV-01A. Validation may inform a
+later REA successor experiment; the sealed test may not be used for model or
+procedure selection. See `docs/TV-01A-generalization-observatory.md`.

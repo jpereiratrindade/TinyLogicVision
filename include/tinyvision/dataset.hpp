@@ -19,7 +19,17 @@ struct Dataset {
     std::vector<Sample> samples;
 };
 
+enum class SyntheticSplit {
+    Training,
+    Validation,
+    Test,
+};
+
 Dataset make_synthetic_dataset(std::size_t samples_per_class = 24, std::uint32_t seed = 11);
+Dataset make_generalization_dataset(SyntheticSplit split,
+                                    std::size_t samples_per_class = 24,
+                                    std::uint32_t seed = 101);
 std::string_view class_name(std::size_t label);
+std::string_view split_name(SyntheticSplit split);
 
 } // namespace tinyvision
