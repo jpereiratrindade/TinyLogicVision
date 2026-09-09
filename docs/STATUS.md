@@ -4,8 +4,8 @@
 
 ```text
 experimental evidence          cd0a591 — TV-01B spatial-coverage result
-consolidated baseline          TV-READY-01 — baseline frozen
-application surface           TV-APP-00 — infrastructure and protocol implemented
+consolidated baseline          TV-READY-02 — dense RGB baseline frozen
+application surface           TV-APP-00 — RGB application pipeline implemented
 application CLI                v0.1 READY — canonical CLI entry point and test suite
 Local Web GUI                  READY — 127.0.0.1 browser application for dataset and dense classification
 Dataset authoring              READY — manifest.csv, dataset.json, and spatial ROI management
@@ -18,7 +18,10 @@ Canonical palette authority    READY — single palette defined in C++ engine an
 Nominal resolution scale       READY — operator-declared nominal 10m/px scale (80x80m support)
 NATURAL APP PROBE              EXPLORATORY / NOT CLAIM-BEARING
 SYNTHETIC TEST                 SEALED / NOT_EVALUATED
-H3 integration                 PLANNED / NOT IMPLEMENTED
+MULTICHANNEL FOUNDATION        NOT_IMPLEMENTED
+GEOSPATIAL / GDAL              NOT_IMPLEMENTED
+H3 INTEGRATION                 NOT_IMPLEMENTED
+SPECTRAL ABLATION              NOT_EVALUATED
 ```
 
 ## Demonstrated
