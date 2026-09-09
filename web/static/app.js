@@ -93,6 +93,46 @@ const el = {
   evalLoss: document.getElementById('eval-loss'),
   evalMeanProb: document.getElementById('eval-mean-prob'),
   confusionMatrixContainer: document.getElementById('confusion-matrix-container'),
+  // Dense Spatial Classification Elements
+  denseSelectModel: document.getElementById('dense-select-model'),
+  denseSelectImage: document.getElementById('dense-select-image'),
+  denseFileInput: document.getElementById('dense-file-input'),
+  btnDenseUpload: document.getElementById('btn-dense-upload'),
+  denseSelectStride: document.getElementById('dense-select-stride'),
+  denseSliderConfidence: document.getElementById('dense-slider-confidence'),
+  denseValConfidence: document.getElementById('dense-val-confidence'),
+  denseSliderMargin: document.getElementById('dense-slider-margin'),
+  denseValMargin: document.getElementById('dense-val-margin'),
+  denseChkSentinel10m: document.getElementById('dense-chk-sentinel-10m'),
+  denseSentinelBadge: document.getElementById('dense-sentinel-badge'),
+  btnRunDenseMap: document.getElementById('btn-run-dense-map'),
+  denseProgress: document.getElementById('dense-progress'),
+  denseProgressText: document.getElementById('dense-progress-text'),
+  denseResultsPanel: document.getElementById('dense-results-panel'),
+  denseCanvas: document.getElementById('dense-canvas'),
+  denseCanvasContainer: document.getElementById('dense-canvas-container'),
+  denseCrosshair: document.getElementById('dense-crosshair'),
+  denseChkOverlay: document.getElementById('dense-chk-overlay'),
+  denseSliderOpacity: document.getElementById('dense-slider-opacity'),
+  denseOpacityVal: document.getElementById('dense-opacity-val'),
+  denseChkShowUncertain: document.getElementById('dense-chk-show-uncertain'),
+  inspOrigin: document.getElementById('insp-origin'),
+  inspCenter: document.getElementById('insp-center'),
+  inspDisplay: document.getElementById('insp-display'),
+  inspSupport: document.getElementById('insp-support'),
+  inspStatus: document.getElementById('insp-status'),
+  inspTop1Class: document.getElementById('insp-top1-class'),
+  inspTop1Prob: document.getElementById('insp-top1-prob'),
+  inspTop2Class: document.getElementById('insp-top2-class'),
+  inspTop2Prob: document.getElementById('insp-top2-prob'),
+  inspMargin: document.getElementById('insp-margin'),
+  denseDynamicLegend: document.getElementById('dense-dynamic-legend'),
+  denseTotalDecisions: document.getElementById('dense-total-decisions'),
+  denseContextInfo: document.getElementById('dense-context-info'),
+  linkDownloadCsv: document.getElementById('link-download-csv'),
+  linkDownloadJson: document.getElementById('link-download-json'),
+  linkDownloadOverlay: document.getElementById('link-download-overlay'),
+  linkDownloadClassmap: document.getElementById('link-download-classmap'),
   // Browser
   browserDatasetsList: document.getElementById('browser-datasets-list'),
   browserModelsList: document.getElementById('browser-models-list'),
@@ -109,6 +149,7 @@ document.addEventListener('DOMContentLoaded', () => {
   setupDatasetGeneration();
   setupTraining();
   setupClassifyAndEval();
+  setupDenseMap();
   refreshWorkspaceStatus();
 });
 
@@ -512,36 +553,47 @@ function updateSummaryTable() {
 function setupDatasetGeneration() {
   if (el.btnAutoSplit) {
     el.btnAutoSplit.addEventListener('click', () => {
-      if (state.patches.length === 0) {
-        alert('Nenhum patch disponível para distribuir. Marque ROIs na imagem primeiro.');
+      if (state.rois.length === 0) {
+        alert('Nenhuma ROI criada. Desenhe ROIs na imagem primeiro.');
         return;
       }
 
-      // Group patches by class
-      const byClass = {};
-      state.patches.forEach((p) => {
-        if (!byClass[p.class]) byClass[p.class] = [];
-        byClass[p.class].push(p);
+      // Group ROIs by class
+      const roisByClass = {};
+      state.rois.forEach((roi) => {
+        if (!roisByClass[roi.class]) roisByClass[roi.class] = [];
+        roisByClass[roi.class].push(roi);
       });
 
-      Object.values(byClass).forEach((clsPatches) => {
-        const total = clsPatches.length;
+      let singleRoiClasses = [];
+      Object.entries(roisByClass).forEach(([clsName, classRois]) => {
+        const total = classRois.length;
         if (total === 1) {
-          clsPatches[0].split = 'train';
+          classRois[0].split = 'train';
+          singleRoiClasses.push(clsName);
         } else {
-          // Put roughly 20% in dev (at least 1), remaining in train
-          const devCount = Math.max(1, Math.floor(total * 0.2));
+          // Put roughly 25% of ROIs in DEV (at least 1), remaining in TRAIN
+          const devCount = Math.max(1, Math.floor(total * 0.25));
           const trainCount = total - devCount;
-          clsPatches.forEach((p, idx) => {
-            p.split = idx < trainCount ? 'train' : 'dev';
+          classRois.forEach((roi, idx) => {
+            roi.split = idx < trainCount ? 'train' : 'dev';
           });
         }
       });
 
-      updateSummaryTable();
+      recalculatePatches();
       redrawCanvas();
+
+      if (singleRoiClasses.length > 0) {
+        alert(
+          'Aviso de Independência Espacial (1 ROI = 1 Split):\n' +
+          `As seguintes classes possuem apenas 1 ROI: ${singleRoiClasses.join(', ')}.\n` +
+          'Para criar o split DEV com independência espacial estrita, desenhe pelo menos uma segunda ROI separada no mapa para essas classes.'
+        );
+      }
     });
   }
+
 
   el.btnGenerateDataset.addEventListener('click', async () => {
 
@@ -784,7 +836,354 @@ async function runEvaluation(split) {
   }
 }
 
-// 8. Refresh Workspace Status
+// 8. Dense Spatial Classification Engine (C++ Map)
+const denseState = {
+  runId: null,
+  metadata: null,
+  sourceImg: null,
+  overlayImg: null,
+  classMapImg: null,
+  confidenceImg: null,
+  currentMode: 'overlay', // 'overlay' | 'class_map' | 'confidence' | 'source'
+  decisions: [],
+};
+
+function setupDenseMap() {
+  if (!el.btnRunDenseMap) return;
+
+  // Sliders
+  el.denseSliderConfidence.addEventListener('input', (e) => {
+    el.denseValConfidence.textContent = parseFloat(e.target.value).toFixed(2);
+  });
+
+  el.denseSliderMargin.addEventListener('input', (e) => {
+    el.denseValMargin.textContent = parseFloat(e.target.value).toFixed(2);
+  });
+
+  el.denseSliderOpacity.addEventListener('input', (e) => {
+    el.denseOpacityVal.textContent = `${e.target.value}%`;
+    drawDenseCanvas();
+  });
+
+  el.denseChkSentinel10m.addEventListener('change', (e) => {
+    const isSent = e.target.checked;
+    el.denseSentinelBadge.textContent = isSent
+      ? 'SENTINEL-2 NATIVO 10 m (80x80m Contexto)'
+      : 'DISPLAY IMAGE — NO 10 m GUARANTEE';
+    el.denseSentinelBadge.className = 'resolution-badge ' + (isSent ? 'sentinel-native' : 'display-only');
+  });
+
+  el.denseChkOverlay.addEventListener('change', () => drawDenseCanvas());
+  el.denseChkShowUncertain.addEventListener('change', () => drawDenseCanvas());
+
+  // View Mode buttons
+  const modeBtns = document.querySelectorAll('.btn-mode');
+  modeBtns.forEach((btn) => {
+    btn.addEventListener('click', () => {
+      modeBtns.forEach((b) => b.classList.remove('active'));
+      btn.classList.add('active');
+      denseState.currentMode = btn.dataset.mode;
+      drawDenseCanvas();
+    });
+  });
+
+  // Dense Upload Image button
+  el.btnDenseUpload.addEventListener('click', () => el.denseFileInput.click());
+  el.denseFileInput.addEventListener('change', async () => {
+    const files = el.denseFileInput.files;
+    if (files.length === 0) return;
+    const formData = new FormData();
+    formData.append('file', files[0]);
+
+    try {
+      const res = await fetch('/api/upload', { method: 'POST', body: formData });
+      const data = await res.json();
+      if (data.success) {
+        await refreshWorkspaceStatus();
+        el.denseSelectImage.value = data.path;
+      } else {
+        alert('Erro ao carregar imagem: ' + data.error);
+      }
+    } catch (err) {
+      alert('Erro na requisição: ' + err);
+    }
+  });
+
+  // Run Dense Map button
+  el.btnRunDenseMap.addEventListener('click', async () => {
+    const modelName = el.denseSelectModel.value;
+    const imagePath = el.denseSelectImage.value;
+
+    if (!modelName || !imagePath) {
+      alert('Selecione um modelo e uma imagem fonte.');
+      return;
+    }
+
+    try {
+      el.btnRunDenseMap.disabled = true;
+      el.denseProgress.classList.remove('hidden');
+
+      const res = await fetch('/api/dense_map', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model_name: modelName,
+          image_path: imagePath,
+          stride: parseInt(el.denseSelectStride.value, 10),
+          confidence: parseFloat(el.denseSliderConfidence.value),
+          margin: parseFloat(el.denseSliderMargin.value),
+          is_sentinel_10m: el.denseChkSentinel10m.checked,
+        }),
+      });
+
+      const data = await res.json();
+      if (!data.success) {
+        alert('Erro na classificação em grade: ' + (data.error || 'Erro desconhecido'));
+        return;
+      }
+
+      denseState.runId = data.run_id;
+      denseState.metadata = data.metadata;
+
+      // Load all images asynchronously
+      const loadImage = (url) =>
+        new Promise((resolve, reject) => {
+          const img = new Image();
+          img.onload = () => resolve(img);
+          img.onerror = reject;
+          img.src = `${url}?t=${Date.now()}`;
+        });
+
+      [
+        denseState.overlayImg,
+        denseState.classMapImg,
+        denseState.confidenceImg,
+        denseState.sourceImg,
+      ] = await Promise.all([
+        loadImage(data.artifacts.overlay),
+        loadImage(data.artifacts.class_map),
+        loadImage(data.artifacts.confidence),
+        loadImage(`/api/image?path=${encodeURIComponent(imagePath)}`),
+      ]);
+
+      // Download and parse CSV for fast local inspection
+      try {
+        const csvRes = await fetch(data.artifacts.classification_csv);
+        const csvText = await csvRes.text();
+        parseDenseDecisions(csvText);
+      } catch (err) {
+        console.warn('Failed to parse classification.csv locally', err);
+      }
+
+      // Update download links
+      el.linkDownloadCsv.href = data.artifacts.classification_csv;
+      el.linkDownloadJson.href = data.artifacts.run_json;
+      el.linkDownloadOverlay.href = data.artifacts.overlay;
+      el.linkDownloadClassmap.href = data.artifacts.class_map;
+
+      // Render Dynamic Legend
+      renderDynamicLegend(data.metadata);
+
+      // Render Canvas
+      drawDenseCanvas();
+
+      el.denseResultsPanel.classList.remove('hidden');
+    } catch (err) {
+      alert('Erro na execução do mapa: ' + err);
+    } finally {
+      el.btnRunDenseMap.disabled = false;
+      el.denseProgress.classList.add('hidden');
+    }
+  });
+
+  // Canvas Mouse Inspection
+  el.denseCanvas.addEventListener('mousemove', (e) => inspectPoint(e));
+  el.denseCanvas.addEventListener('click', (e) => inspectPoint(e, true));
+}
+
+function parseDenseDecisions(csvText) {
+  const lines = csvText.trim().split('\n');
+  if (lines.length < 2) return;
+  const headers = lines[0].split(',');
+  denseState.decisions = [];
+  for (let i = 1; i < lines.length; ++i) {
+    const cols = lines[i].split(',');
+    if (cols.length < headers.length) continue;
+    const row = {};
+    headers.forEach((h, idx) => {
+      row[h.trim()] = cols[idx].trim();
+    });
+    denseState.decisions.push(row);
+  }
+}
+
+function renderDynamicLegend(meta) {
+  if (!el.denseDynamicLegend || !meta) return;
+  const classes = meta.classes || [];
+  const total = meta.decision_count || 0;
+  el.denseTotalDecisions.textContent = `${total.toLocaleString()} decisões`;
+
+  const isSent = meta.sentinel_native_10m;
+  el.denseContextInfo.textContent = isSent
+    ? `Janela 8x8 (80x80m nominal) • Stride ${meta.stride} (${meta.nominal_decision_spacing_m}m)`
+    : `Janela 8x8 (Espaço de pixel da imagem) • Stride ${meta.stride}`;
+
+  // Count predictions per class from decisions if available
+  const counts = {};
+  let uncertainCount = 0;
+  if (denseState.decisions.length > 0) {
+    denseState.decisions.forEach((d) => {
+      if (d.status === 'UNCERTAIN') {
+        uncertainCount++;
+      } else {
+        counts[d.predicted_class] = (counts[d.predicted_class] || 0) + 1;
+      }
+    });
+  }
+
+  const palette = ['#22c55e', '#eab308', '#f97316', '#3b82f6', '#ec4899', '#a855f7', '#14b8a6'];
+  let html = '';
+  classes.forEach((cls, idx) => {
+    const color = palette[idx % palette.length];
+    const cCount = counts[cls] || 0;
+    const pct = total > 0 ? ((cCount / total) * 100).toFixed(1) : '0.0';
+    html += `
+      <div class="legend-item">
+        <div style="display:flex;align-items:center;">
+          <span class="legend-color-dot" style="background-color: ${color};"></span>
+          <strong>${cls}</strong>
+        </div>
+        <span class="mono">${cCount.toLocaleString()} (${pct}%)</span>
+      </div>
+    `;
+  });
+
+  // UNCERTAIN item
+  const uncPct = total > 0 ? ((uncertainCount / total) * 100).toFixed(1) : '0.0';
+  html += `
+    <div class="legend-item" style="border-left: 3px solid #808080;">
+      <div style="display:flex;align-items:center;">
+        <span class="legend-color-dot" style="background-color: #808080;"></span>
+        <em>UNCERTAIN (Incerteza)</em>
+      </div>
+      <span class="mono">${uncertainCount.toLocaleString()} (${uncPct}%)</span>
+    </div>
+  `;
+
+  el.denseDynamicLegend.innerHTML = html;
+}
+
+function drawDenseCanvas() {
+  const canvas = el.denseCanvas;
+  if (!canvas || !denseState.sourceImg) return;
+
+  const dctx = canvas.getContext('2d');
+  const w = denseState.sourceImg.naturalWidth || denseState.sourceImg.width;
+  const h = denseState.sourceImg.naturalHeight || denseState.sourceImg.height;
+
+  canvas.width = w;
+  canvas.height = h;
+  dctx.clearRect(0, 0, w, h);
+
+  const mode = denseState.currentMode;
+  if (mode === 'source') {
+    dctx.drawImage(denseState.sourceImg, 0, 0);
+  } else if (mode === 'class_map') {
+    dctx.drawImage(denseState.classMapImg, 0, 0);
+  } else if (mode === 'confidence') {
+    dctx.drawImage(denseState.confidenceImg, 0, 0);
+  } else if (mode === 'overlay') {
+    dctx.drawImage(denseState.sourceImg, 0, 0);
+    if (el.denseChkOverlay.checked && denseState.classMapImg) {
+      const alpha = parseInt(el.denseSliderOpacity.value, 10) / 100.0;
+      dctx.globalAlpha = alpha;
+      dctx.drawImage(denseState.classMapImg, 0, 0);
+      dctx.globalAlpha = 1.0;
+    }
+  }
+}
+
+async function inspectPoint(e, isClick = false) {
+  const canvas = el.denseCanvas;
+  if (!canvas || !denseState.metadata) return;
+
+  const rect = canvas.getBoundingClientRect();
+  const scaleX = canvas.width / rect.width;
+  const scaleY = canvas.height / rect.height;
+
+  const clickX = Math.floor((e.clientX - rect.left) * scaleX);
+  const clickY = Math.floor((e.clientY - rect.top) * scaleY);
+
+  const stride = denseState.metadata.stride || 1;
+  const w = denseState.metadata.source_width || canvas.width;
+  const h = denseState.metadata.source_height || canvas.height;
+
+  // Grid origins
+  const originX = Math.floor(clickX / stride) * stride;
+  const originY = Math.floor(clickY / stride) * stride;
+
+  const nx = Math.floor((w - 8) / stride) + 1;
+  const ny = Math.floor((h - 8) / stride) + 1;
+
+  const gx = Math.floor(originX / stride);
+  const gy = Math.floor(originY / stride);
+
+  if (gx < 0 || gx >= nx || gy < 0 || gy >= ny) return;
+
+  const centerX = originX + 3.5;
+  const centerY = originY + 3.5;
+  const displayX = originX + 4;
+  const displayY = originY + 4;
+
+  const targetRow = gy * nx + gx;
+  let decision = denseState.decisions[targetRow];
+
+  if (!decision && denseState.runId) {
+    try {
+      const res = await fetch(`/api/runs/${denseState.runId}/inspect?x=${originX}&y=${originY}`);
+      const data = await res.json();
+      if (data.success) decision = data.decision;
+    } catch (err) {
+      console.warn('Inspect fetch failed', err);
+    }
+  }
+
+  if (decision) {
+    el.inspOrigin.textContent = `(${originX}, ${originY})`;
+    el.inspCenter.textContent = `(${centerX.toFixed(1)}, ${centerY.toFixed(1)})`;
+    el.inspDisplay.textContent = `(${displayX}, ${displayY})`;
+    el.inspSupport.textContent = denseState.metadata.sentinel_native_10m
+      ? '8x8 px (80x80 m nominal)'
+      : '8x8 px (Espaço de pixel)';
+
+    const isUncertain = decision.status === 'UNCERTAIN';
+    el.inspStatus.textContent = decision.status;
+    el.inspStatus.className = 'badge ' + (isUncertain ? 'badge-uncertain' : 'badge-classified');
+
+    el.inspTop1Class.textContent = decision.predicted_class;
+    el.inspTop1Prob.textContent = `${(parseFloat(decision.probability) * 100).toFixed(2)}%`;
+    el.inspTop2Class.textContent = decision.second_class || '-';
+    el.inspTop2Prob.textContent = decision.second_probability
+      ? `${(parseFloat(decision.second_probability) * 100).toFixed(2)}%`
+      : '-';
+    el.inspMargin.textContent = decision.margin
+      ? `${(parseFloat(decision.margin) * 100).toFixed(2)}%`
+      : '-';
+
+    // Position crosshair
+    if (el.denseCrosshair) {
+      const canvasWrapper = el.denseCanvasContainer;
+      const wrapRect = canvasWrapper.getBoundingClientRect();
+      const crossX = e.clientX - wrapRect.left;
+      const crossY = e.clientY - wrapRect.top;
+      el.denseCrosshair.style.left = `${crossX}px`;
+      el.denseCrosshair.style.top = `${crossY}px`;
+      el.denseCrosshair.classList.remove('hidden');
+    }
+  }
+}
+
+// 9. Refresh Workspace Status
 async function refreshWorkspaceStatus() {
   try {
     const res = await fetch('/api/status');
@@ -793,6 +1192,7 @@ async function refreshWorkspaceStatus() {
 
     state.datasets = data.datasets || [];
     state.models = data.models || [];
+    const uploads = data.uploads || [];
 
     // Populate dataset selects
     const datasetOpts = state.datasets
@@ -807,6 +1207,17 @@ async function refreshWorkspaceStatus() {
       .join('');
     el.classifySelectModel.innerHTML = modelOpts;
     el.evalSelectModel.innerHTML = modelOpts;
+    if (el.denseSelectModel) {
+      el.denseSelectModel.innerHTML = modelOpts;
+    }
+
+    // Populate dense image select
+    if (el.denseSelectImage) {
+      const imgOpts = uploads
+        .map((u) => `<option value="${u.path}">${u.name} (${u.width}x${u.height})</option>`)
+        .join('');
+      el.denseSelectImage.innerHTML = imgOpts;
+    }
 
     // Browser lists
     el.browserDatasetsList.innerHTML = state.datasets.length

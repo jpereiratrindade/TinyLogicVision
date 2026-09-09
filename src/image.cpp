@@ -127,6 +127,24 @@ RgbImage load_rgb_image(const std::filesystem::path& path) {
     throw std::invalid_argument("unsupported image extension: " + path.string());
 }
 
+void save_png_image(const std::filesystem::path& path, const RgbImage& image) {
+    if (image.width == 0 || image.height == 0 ||
+        image.pixels.size() != image.width * image.height * 3) {
+        throw std::invalid_argument("invalid RGB image to save: " + path.string());
+    }
+    png_image png{};
+    png.version = PNG_IMAGE_VERSION;
+    png.width = static_cast<png_uint_32>(image.width);
+    png.height = static_cast<png_uint_32>(image.height);
+    png.format = PNG_FORMAT_RGB;
+    const auto filename = path.string();
+    if (png_image_write_to_file(&png, filename.c_str(), 0, image.pixels.data(), 0, nullptr) == 0) {
+        const std::string message = png.message;
+        throw std::runtime_error("failed to save PNG " + filename + ": " + message);
+    }
+}
+
+
 std::vector<double> resize_rgb_bilinear(const RgbImage& image,
                                         std::size_t output_width,
                                         std::size_t output_height) {

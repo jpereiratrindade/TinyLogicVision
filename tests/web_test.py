@@ -135,25 +135,51 @@ def main():
                 assert upload_resp["sha256"] == img_sha
                 uploaded_path = upload_resp["path"]
 
-            # 4. Test Dataset Creation with Patches & Manifest
-            print("Testing 8x8 patch extraction and dataset authoring...")
+            # 4A. Test Spatial Split Invariant Rejection (1 ROI != Multiple Splits)
+            print("Testing spatial split invariant rejection (1 ROI = 1 Split)...")
+            bad_patches = [
+                {"roi_id": "roi_leaky", "class": "floresta", "split": "train", "x": 0, "y": 0},
+                {"roi_id": "roi_leaky", "class": "floresta", "split": "dev", "x": 8, "y": 0},
+            ]
+            bad_payload = json.dumps({
+                "dataset_name": "leaky_dataset",
+                "image_path": uploaded_path,
+                "is_sentinel_10m": True,
+                "patches": bad_patches,
+            }).encode("utf-8")
+            bad_req = urllib.request.Request(
+                f"{base_url}/api/datasets/create",
+                data=bad_payload,
+                headers={"Content-Type": "application/json"},
+                method="POST"
+            )
+            try:
+                urllib.request.urlopen(bad_req)
+                raise AssertionError("Mixed split ROI was unexpectedly accepted!")
+            except urllib.error.HTTPError as e:
+                assert e.code == 400, f"Expected 400 for spatial split violation, got {e.code}"
+                err_body = json.loads(e.read().decode("utf-8"))
+                assert "independência espacial" in err_body["error"].lower() or "violação" in err_body["error"].lower()
+
+            # 4B. Test Dataset Creation with Valid Patches & Strict ROI Splits
+            print("Testing 8x8 patch extraction and dataset authoring (1 ROI = 1 Split)...")
             dataset_name = f"test_ds_{int(time.time())}"
             patches = [
-                # Forest patches (y=0..8)
-                {"roi_id": "roi_f1", "class": "floresta", "split": "train", "x": 0, "y": 0},
-                {"roi_id": "roi_f1", "class": "floresta", "split": "train", "x": 8, "y": 0},
-                {"roi_id": "roi_f1", "class": "floresta", "split": "dev", "x": 16, "y": 0},
-                {"roi_id": "roi_f1", "class": "floresta", "split": "probe", "x": 24, "y": 0},
-                # Grassland patches (y=10..18)
-                {"roi_id": "roi_g1", "class": "campo", "split": "train", "x": 0, "y": 10},
-                {"roi_id": "roi_g1", "class": "campo", "split": "train", "x": 8, "y": 10},
-                {"roi_id": "roi_g1", "class": "campo", "split": "dev", "x": 16, "y": 10},
-                {"roi_id": "roi_g1", "class": "campo", "split": "probe", "x": 24, "y": 10},
-                # Soil patches (y=22..30)
-                {"roi_id": "roi_s1", "class": "solo", "split": "train", "x": 0, "y": 22},
-                {"roi_id": "roi_s1", "class": "solo", "split": "train", "x": 8, "y": 22},
-                {"roi_id": "roi_s1", "class": "solo", "split": "dev", "x": 16, "y": 22},
-                {"roi_id": "roi_s1", "class": "solo", "split": "probe", "x": 24, "y": 22},
+                # Forest patches (distinct ROIs per split)
+                {"roi_id": "roi_f_train", "class": "floresta", "split": "train", "x": 0, "y": 0},
+                {"roi_id": "roi_f_train", "class": "floresta", "split": "train", "x": 8, "y": 0},
+                {"roi_id": "roi_f_dev", "class": "floresta", "split": "dev", "x": 16, "y": 0},
+                {"roi_id": "roi_f_probe", "class": "floresta", "split": "probe", "x": 24, "y": 0},
+                # Grassland patches
+                {"roi_id": "roi_g_train", "class": "campo", "split": "train", "x": 0, "y": 10},
+                {"roi_id": "roi_g_train", "class": "campo", "split": "train", "x": 8, "y": 10},
+                {"roi_id": "roi_g_dev", "class": "campo", "split": "dev", "x": 16, "y": 10},
+                {"roi_id": "roi_g_probe", "class": "campo", "split": "probe", "x": 24, "y": 10},
+                # Soil patches
+                {"roi_id": "roi_s_train", "class": "solo", "split": "train", "x": 0, "y": 22},
+                {"roi_id": "roi_s_train", "class": "solo", "split": "train", "x": 8, "y": 22},
+                {"roi_id": "roi_s_dev", "class": "solo", "split": "dev", "x": 16, "y": 22},
+                {"roi_id": "roi_s_probe", "class": "solo", "split": "probe", "x": 24, "y": 22},
             ]
 
             create_payload = json.dumps({
@@ -253,8 +279,62 @@ def main():
                     assert eval_resp["samples"] == 3
                     assert eval_resp["accuracy"] >= 0.0
 
-            # Clean up test dataset and model from .tinyvision
+            # 8. Test Dense Spatial Classification via API (runs ./bin/tinyvision map)
+            print("Testing dense spatial classification via web API...")
+            dense_payload = json.dumps({
+                "model_name": model_name,
+                "image_path": uploaded_path,
+                "stride": 4,
+                "confidence": 0.0,
+                "margin": 0.0,
+                "is_sentinel_10m": True,
+            }).encode("utf-8")
+
+            req = urllib.request.Request(
+                f"{base_url}/api/dense_map",
+                data=dense_payload,
+                headers={"Content-Type": "application/json"},
+                method="POST"
+            )
+            with urllib.request.urlopen(req) as res:
+                assert res.status == 200
+                dense_resp = json.loads(res.read().decode("utf-8"))
+                assert dense_resp["success"] is True
+                run_id = dense_resp["run_id"]
+                metadata = dense_resp["metadata"]
+                assert metadata["stride"] == 4
+                # 32x32 image with stride 4: nx = (32-8)/4 + 1 = 7, ny = 7 => 49 decisions
+                assert metadata["decision_count"] == 49
+                assert metadata["sentinel_native_10m"] is True
+                assert metadata["nominal_context_m"] == 80
+                assert metadata["nominal_decision_spacing_m"] == 40
+                assert "geospatial" in metadata
+                assert metadata["geospatial"]["available"] is False
+
+            # Verify artifact delivery via HTTP
+            print("Verifying map artifacts delivery over HTTP...")
+            for art in ("class_map.png", "confidence.png", "overlay.png", "run.json", "classification.csv"):
+                with urllib.request.urlopen(f"{base_url}/api/runs/{run_id}/{art}") as res:
+                    assert res.status == 200
+                    data = res.read()
+                    assert len(data) > 0
+
+            # Verify point inspection endpoint
+            print("Verifying point inspection endpoint...")
+            with urllib.request.urlopen(f"{base_url}/api/runs/{run_id}/inspect?x=0&y=0") as res:
+                assert res.status == 200
+                insp_data = json.loads(res.read().decode("utf-8"))
+                assert insp_data["success"] is True
+                dec = insp_data["decision"]
+                assert dec["origin_x"] == "0"
+                assert dec["origin_y"] == "0"
+                assert dec["center_x"] == "3.5"
+                assert dec["center_y"] == "3.5"
+                assert dec["predicted_class"] in ("floresta", "campo", "solo")
+
+            # Clean up test dataset, model and runs from .tinyvision
             shutil.rmtree(ds_dir, ignore_errors=True)
+            shutil.rmtree(REPO_ROOT / ".tinyvision" / "runs" / run_id, ignore_errors=True)
             model_file = REPO_ROOT / ".tinyvision" / "models" / f"{model_name}.tlv"
             if model_file.exists():
                 model_file.unlink()

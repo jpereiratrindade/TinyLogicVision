@@ -13,6 +13,7 @@ Usage:
   tinyvision train DATASET_ROOT MODEL_PATH
   tinyvision classify MODEL_PATH IMAGE_PATH
   tinyvision evaluate MODEL_PATH SPLIT_DIRECTORY
+  tinyvision map MODEL_PATH IMAGE_PATH OUTPUT_DIR [options]
   tinyvision web [--port PORT] [--host HOST]
   tinyvision verify
   tinyvision --help | -h
@@ -21,6 +22,7 @@ Commands:
   train       Train model on DATASET_ROOT/train and observe DATASET_ROOT/dev
   classify    Classify a single PNG/JPEG image using a trained model
   evaluate    Evaluate a trained model on a labeled split directory (e.g. dev/ or probe/)
+  map         Run dense spatial classification across an image grid
   web         Launch the local web GUI on 127.0.0.1
   verify      Run the complete project verification suite
 
@@ -28,6 +30,7 @@ Options:
   -h, --help  Show this help message
 EOF
 }
+
 
 check_executable() {
     local target="$1"
@@ -91,7 +94,20 @@ case "${cmd}" in
         fi
         exec "${target_bin}" "$@"
         ;;
+    map)
+        target_bin="${build_dir}/tinyvision_map"
+        if ! check_executable "${target_bin}" "Build the project first: cmake -S '${repo_root}' -B '${build_dir}' -G Ninja -DCMAKE_BUILD_TYPE=Release && cmake --build '${build_dir}'"; then
+            exit 1
+        fi
+        if [ "$#" -lt 3 ]; then
+            printf 'usage: tinyvision map MODEL_PATH IMAGE_PATH OUTPUT_DIR [options]\n' >&2
+            printf 'options: --stride 1|2|4|8 --confidence FLOAT --margin FLOAT --sentinel-10m\n' >&2
+            exit 2
+        fi
+        exec "${target_bin}" "$@"
+        ;;
     web)
+
         server_script="${repo_root}/web/server.py"
         if [ ! -f "${server_script}" ]; then
             printf 'tinyvision: web server script not found: %s\n' "${server_script}" >&2

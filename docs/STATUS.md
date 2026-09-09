@@ -3,15 +3,19 @@
 ## Current authority
 
 ```text
-experimental evidence    cd0a591 — TV-01B spatial-coverage result
-consolidated baseline    TV-READY-01 — commit containing this document
-application surface     TV-APP-00 — infrastructure and protocol implemented
-application CLI          v0.1 READY — canonical CLI entry point and test suite
-Local Web GUI            READY — 127.0.0.1 browser application for patch authoring and workflow
-Dataset authoring        READY — manifest.csv, dataset.json, and spatial ROI management
-Patch extraction         READY — exact 8x8 source pixel sampling with stride 8
-NATURAL APP PROBE        NOT_EVALUATED
-sealed TEST              NOT_EVALUATED
+experimental evidence          cd0a591 — TV-01B spatial-coverage result
+consolidated baseline          TV-READY-01 — baseline frozen
+application surface           TV-APP-00 — infrastructure and protocol implemented
+application CLI                v0.1 READY — canonical CLI entry point and test suite
+Local Web GUI                  READY — 127.0.0.1 browser application for dataset and dense classification
+Dataset authoring              READY — manifest.csv, dataset.json, and spatial ROI management
+ROI-level split                READY — strict spatial independence (1 ROI = 1 Split)
+Dense patch classification     READY — in-memory C++ sliding window classification engine
+Uncertainty map                READY — top-1/top-2 margin and confidence thresholding
+Sentinel native-pixel mode     READY — 1px=10m native scale context tagging (80x80m support)
+NATURAL APP PROBE              EXPLORATORY / NOT CLAIM-BEARING
+SYNTHETIC TEST                 SEALED / NOT_EVALUATED
+H3 integration                 PLANNED / NOT IMPLEMENTED
 ```
 
 ## Demonstrated
@@ -32,12 +36,16 @@ sealed TEST              NOT_EVALUATED
 - an end-to-end three-class raster-fixture test with model round-trip and a
   held-out fixture split;
 - a canonical application CLI entry point (`./bin/tinyvision`) orchestrating
-  training, classification, evaluation, and verification with full path independence
+  training, classification, evaluation, dense mapping, and verification with full path independence
   and CLI test coverage;
 - a local Web GUI (`./bin/tinyvision web`) executing on `127.0.0.1` enabling interactive
-  image inspection, Sentinel 10m vs display resolution tagging, ROI annotation, exact
-  8x8 patch extraction with provenance manifest generation, and integrated training,
-  classification, and split evaluation without modifying core ML mechanics or baseline data.
+  image inspection, Sentinel 10m vs display resolution tagging, strict ROI-level split annotation,
+  exact 8x8 patch extraction with provenance manifest generation, and integrated training,
+  classification, dense mapping with interactive spatial inspection, and split evaluation;
+- in-memory C++ dense classification engine (`tinyvision map`) sliding an exact 8x8 window
+  with configurable strides (1, 2, 4, 8), producing `classification.csv`, `run.json`, `class_map.png`,
+  `confidence.png`, and `overlay.png` with sub-millisecond execution per window;
+- strict spatial independence validation enforcing 1 ROI = 1 Split across all dataset generation tools.
 
 
 

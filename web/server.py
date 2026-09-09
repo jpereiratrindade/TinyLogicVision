@@ -5,6 +5,7 @@ Orchestrates patch extraction, dataset authoring, model training,
 classification, and evaluation using the TinyLogicVision CLI authority.
 """
 
+import uuid
 import argparse
 import csv
 import datetime
@@ -159,8 +160,17 @@ class TinyVisionRequestHandler(http.server.BaseHTTPRequestHandler):
         elif path == "/api/image":
             self.handle_api_image(query)
         elif path.startswith("/api/runs/"):
-            run_id = path[len("/api/runs/") :]
-            self.handle_api_run_status(run_id)
+            rest = path[len("/api/runs/") :]
+            parts = rest.split("/", 1)
+            run_id = sanitize_name(parts[0])
+            if len(parts) > 1 and parts[1]:
+                sub = parts[1]
+                if sub.startswith("inspect"):
+                    self.handle_api_run_inspect(run_id, query)
+                else:
+                    self.handle_api_run_artifact(run_id, sub)
+            else:
+                self.handle_api_run_status(run_id)
         elif path == "/api/datasets":
             self.handle_api_list_datasets()
         elif path == "/api/models":
@@ -180,6 +190,8 @@ class TinyVisionRequestHandler(http.server.BaseHTTPRequestHandler):
             self.handle_api_train()
         elif path == "/api/classify":
             self.handle_api_classify()
+        elif path == "/api/dense_map":
+            self.handle_api_dense_map()
         elif path == "/api/evaluate":
             self.handle_api_evaluate()
         else:
@@ -329,10 +341,24 @@ class TinyVisionRequestHandler(http.server.BaseHTTPRequestHandler):
             import shutil
             shutil.rmtree(dataset_dir)
 
+        # Enforce scientific spatial split invariant: 1 ROI -> 1 Split
+        roi_to_split = {}
+        for p in patches:
+            roi_id = str(p.get("roi_id", "roi_0"))
+            split_val = str(p.get("split", "train")).lower()
+            if roi_id in roi_to_split and roi_to_split[roi_id] != split_val:
+                self.send_error_json(
+                    f"Violação de independência espacial: ROI '{roi_id}' possui patches distribuídos em múltiplos splits ('{roi_to_split[roi_id]}' e '{split_val}'). A regra científica exige 1 ROI = 1 Split.",
+                    400,
+                )
+                return
+            roi_to_split[roi_id] = split_val
+
         manifest_rows = []
         counts = {"train": {}, "dev": {}, "probe": {}}
         patch_records = []
         timestamp = datetime.datetime.now(datetime.timezone.utc).isoformat()
+
 
         patch_index = 0
         for p in patches:
@@ -685,6 +711,162 @@ class TinyVisionRequestHandler(http.server.BaseHTTPRequestHandler):
                     ).isoformat(),
                 })
         return models
+
+    def handle_api_dense_map(self):
+        content_length = int(self.headers.get("Content-Length", 0))
+        body = self.rfile.read(content_length)
+        try:
+            req = json.loads(body.decode("utf-8"))
+        except Exception as e:
+            self.send_error_json(f"Invalid JSON: {e}", 400)
+            return
+
+        model_name = req.get("model_name", "")
+        if not model_name.endswith(".tlv"):
+            model_path = MODELS_DIR / f"{sanitize_name(model_name)}.tlv"
+        else:
+            model_path = MODELS_DIR / model_name
+
+        image_path = Path(req.get("image_path", ""))
+        stride = int(req.get("stride", 1))
+        confidence = float(req.get("confidence", 0.0))
+        margin = float(req.get("margin", 0.0))
+        is_sentinel = bool(req.get("is_sentinel_10m", False))
+
+        if not model_path.is_file():
+            self.send_error_json(f"Model file not found: {model_path.name}", 400)
+            return
+
+        if not is_safe_path(image_path) or not image_path.is_file():
+            self.send_error_json("Image file not found or path forbidden", 400)
+            return
+
+        if stride not in (1, 2, 4, 8):
+            self.send_error_json(f"Invalid stride {stride}, must be 1, 2, 4, or 8", 400)
+            return
+
+        run_id = f"map_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:6]}"
+        out_dir = RUNS_DIR / run_id
+        out_dir.mkdir(parents=True, exist_ok=True)
+
+        cli_bin = REPO_ROOT / "bin" / "tinyvision"
+        cmd = [
+            str(cli_bin), "map",
+            str(model_path),
+            str(image_path),
+            str(out_dir),
+            "--stride", str(stride),
+            "--confidence", str(confidence),
+            "--margin", str(margin),
+        ]
+        if is_sentinel:
+            cmd.append("--sentinel-10m")
+
+        proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        if proc.returncode != 0:
+            self.send_error_json(f"Dense map classification failed: {proc.stderr or proc.stdout}", 400)
+            return
+
+        run_json_path = out_dir / "run.json"
+        metadata = {}
+        if run_json_path.is_file():
+            try:
+                with open(run_json_path, "r", encoding="utf-8") as f:
+                    metadata = json.load(f)
+            except Exception:
+                pass
+
+        self.send_json({
+            "success": True,
+            "run_id": run_id,
+            "metadata": metadata,
+            "artifacts": {
+                "class_map": f"/api/runs/{run_id}/class_map.png",
+                "confidence": f"/api/runs/{run_id}/confidence.png",
+                "overlay": f"/api/runs/{run_id}/overlay.png",
+                "run_json": f"/api/runs/{run_id}/run.json",
+                "classification_csv": f"/api/runs/{run_id}/classification.csv",
+            },
+            "raw_output": proc.stdout,
+        })
+
+    def handle_api_run_artifact(self, run_id: str, filename: str):
+        allowed = {
+            "class_map.png": "image/png",
+            "confidence.png": "image/png",
+            "overlay.png": "image/png",
+            "run.json": "application/json",
+            "classification.csv": "text/csv; charset=utf-8",
+        }
+        if filename not in allowed:
+            self.send_error_json("Artifact not allowed or not found", 404)
+            return
+        target_file = RUNS_DIR / sanitize_name(run_id) / filename
+        if not target_file.is_file():
+            self.send_error_json("File not found", 404)
+            return
+        self.serve_file(target_file, allowed[filename])
+
+    def handle_api_run_status(self, run_id: str):
+        clean_id = sanitize_name(run_id)
+        run_file = RUNS_DIR / clean_id / "run.json"
+        if not run_file.is_file():
+            self.send_error_json("Run not found", 404)
+            return
+        with open(run_file, "r", encoding="utf-8") as f:
+            meta = json.load(f)
+        self.send_json({"success": True, "run_id": clean_id, "metadata": meta})
+
+    def handle_api_run_inspect(self, run_id: str, query: dict):
+        clean_id = sanitize_name(run_id)
+        csv_file = RUNS_DIR / clean_id / "classification.csv"
+        run_file = RUNS_DIR / clean_id / "run.json"
+        if not csv_file.is_file() or not run_file.is_file():
+            self.send_error_json("Run not found", 404)
+            return
+
+        try:
+            x = int(query.get("x", ["0"])[0])
+            y = int(query.get("y", ["0"])[0])
+        except ValueError:
+            self.send_error_json("Invalid coordinates", 400)
+            return
+
+        with open(run_file, "r", encoding="utf-8") as f:
+            meta = json.load(f)
+
+        stride = meta.get("stride", 1)
+        w = meta.get("source_width", 0)
+        h = meta.get("source_height", 0)
+
+        # Snap to grid origin
+        snap_x = (x // stride) * stride
+        snap_y = (y // stride) * stride
+
+        nx = (w - 8) // stride + 1
+        ny = (h - 8) // stride + 1
+
+        gx = snap_x // stride
+        gy = snap_y // stride
+
+        if gx < 0 or gx >= nx or gy < 0 or gy >= ny:
+            self.send_error_json("Coordinates out of decision bounds", 400)
+            return
+
+        target_row = gy * nx + gx
+        row_data = None
+        with open(csv_file, "r", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            for idx, row in enumerate(reader):
+                if idx == target_row:
+                    row_data = row
+                    break
+
+        if row_data is None:
+            self.send_error_json("Decision point not found", 404)
+            return
+
+        self.send_json({"success": True, "decision": row_data})
 
     def handle_api_list_datasets(self):
         self.send_json({"success": True, "datasets": self.get_datasets_list()})

@@ -291,10 +291,201 @@
 
     <!-- Tab 3: Classify & Evaluate -->
     <main id="tab-eval" class="tab-content">
-      <div class="split-layout">
+      <!-- Dense Classification Hero Section -->
+      <section class="card dense-map-container">
+        <div class="panel-header">
+          <div>
+            <h3>🗺️ Classificar Imagem em Grade (Mapa Espacial Denso)</h3>
+            <p class="help-text">
+              Responde <em>"onde o modelo vê cada classe na imagem?"</em> com janela deslizante 8x8 e suporte nominal 80x80m (Sentinel).
+            </p>
+          </div>
+          <span class="badge-version">C++ Map Engine</span>
+        </div>
+
+        <div class="dense-controls-grid">
+          <div class="form-col">
+            <label>Modelo (.tlv):</label>
+            <select id="dense-select-model" class="input-select"></select>
+          </div>
+          <div class="form-col">
+            <label>Imagem Fonte:</label>
+            <div class="flex-row-gap">
+              <select id="dense-select-image" class="input-select"></select>
+              <input type="file" id="dense-file-input" accept="image/png,image/jpeg" hidden>
+              <button id="btn-dense-upload" class="btn btn-sm btn-outline">📂 Carregar</button>
+            </div>
+          </div>
+          <div class="form-col">
+            <label>Espaçamento (Stride):</label>
+            <select id="dense-select-stride" class="input-select">
+              <option value="1" selected>Stride 1 (Decisão a cada pixel / 10 m)</option>
+              <option value="2">Stride 2 (Decisão a cada 2 px / 20 m)</option>
+              <option value="4">Stride 4 (Decisão a cada 4 px / 40 m)</option>
+              <option value="8">Stride 8 (Decisão a cada 8 px / 80 m - blocos)</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="dense-sliders-row">
+          <div class="slider-group">
+            <div class="slider-label-row">
+              <label>Threshold de Confiança:</label>
+              <span id="dense-val-confidence" class="slider-val-badge">0.00</span>
+            </div>
+            <input type="range" id="dense-slider-confidence" min="0" max="1" step="0.05" value="0.00" class="input-range">
+            <small class="text-dim">top1_probability &lt; threshold → UNCERTAIN</small>
+          </div>
+
+          <div class="slider-group">
+            <div class="slider-label-row">
+              <label>Threshold de Margem (Top1 - Top2):</label>
+              <span id="dense-val-margin" class="slider-val-badge">0.00</span>
+            </div>
+            <input type="range" id="dense-slider-margin" min="0" max="1" step="0.05" value="0.00" class="input-range">
+            <small class="text-dim">top1_prob - top2_prob &lt; margin → UNCERTAIN</small>
+          </div>
+
+          <div class="sentinel-check-col">
+            <label class="toggle-container">
+              <input type="checkbox" id="dense-chk-sentinel-10m">
+              <span class="toggle-slider"></span>
+              <span class="toggle-text">Fonte é Sentinel nativo 10 m</span>
+            </label>
+            <div id="dense-sentinel-badge" class="resolution-badge display-only">
+              DISPLAY IMAGE — NO 10 m GUARANTEE
+            </div>
+          </div>
+        </div>
+
+        <div class="action-bar-row">
+          <button id="btn-run-dense-map" class="btn btn-primary btn-lg">
+            ⚡ EXECUTAR CLASSIFICAÇÃO EM GRADE
+          </button>
+          <div id="dense-progress" class="progress-box hidden">
+            <div class="spinner"></div>
+            <span id="dense-progress-text">Processando janelas deslizantes em C++...</span>
+          </div>
+        </div>
+
+        <!-- Dense Results Interactive Viewer -->
+        <div id="dense-results-panel" class="dense-results-box hidden">
+          <div class="dense-viewer-header">
+            <div class="dense-view-modes">
+              <button class="btn btn-sm btn-mode active" data-mode="overlay">Overlay (Sobreposto)</button>
+              <button class="btn btn-sm btn-mode" data-mode="class_map">Mapa de Classes</button>
+              <button class="btn btn-sm btn-mode" data-mode="confidence">Mapa de Confiança</button>
+              <button class="btn btn-sm btn-mode" data-mode="source">Imagem Original</button>
+            </div>
+
+            <div class="dense-viewer-tools">
+              <label class="checkbox-inline">
+                <input type="checkbox" id="dense-chk-overlay" checked>
+                <span>Overlay Ativo</span>
+              </label>
+              <div class="opacity-control">
+                <span>Opacidade:</span>
+                <input type="range" id="dense-slider-opacity" min="0" max="100" value="65" class="input-range-sm">
+                <span id="dense-opacity-val">65%</span>
+              </div>
+              <label class="checkbox-inline">
+                <input type="checkbox" id="dense-chk-show-uncertain" checked>
+                <span>Exibir Incerteza (UNCERTAIN)</span>
+              </label>
+            </div>
+          </div>
+
+          <div class="dense-viewer-layout">
+            <!-- Canvas Map Container -->
+            <div class="dense-canvas-wrapper" id="dense-canvas-container">
+              <canvas id="dense-canvas"></canvas>
+              <div id="dense-crosshair" class="dense-crosshair hidden"></div>
+            </div>
+
+            <!-- Side Inspector & Legend -->
+            <div class="dense-side-panel">
+              <!-- Spatial Inspector Card -->
+              <div class="inspector-card">
+                <h4>🎯 Inspeção Espacial da Decisão</h4>
+                <div class="inspector-field-group">
+                  <div class="insp-row">
+                    <span class="insp-lbl">Origem Janela (x, y):</span>
+                    <strong id="insp-origin" class="mono">-</strong>
+                  </div>
+                  <div class="insp-row">
+                    <span class="insp-lbl">Centro Geométrico:</span>
+                    <strong id="insp-center" class="mono text-cyan">-</strong>
+                  </div>
+                  <div class="insp-row">
+                    <span class="insp-lbl">Âncora Visual (Display):</span>
+                    <strong id="insp-display" class="mono">-</strong>
+                  </div>
+                  <div class="insp-row">
+                    <span class="insp-lbl">Suporte Contextual:</span>
+                    <span id="insp-support" class="text-dim">8x8 px (80x80 m nominal)</span>
+                  </div>
+                </div>
+
+                <div class="inspector-decision-box">
+                  <div class="decision-status-row">
+                    <span class="insp-lbl">Status:</span>
+                    <span id="insp-status" class="badge badge-classified">CLASSIFIED</span>
+                  </div>
+                  <div class="insp-row">
+                    <span class="insp-lbl">Classe Predita (Top 1):</span>
+                    <strong id="insp-top1-class" class="text-emerald">-</strong>
+                  </div>
+                  <div class="insp-row">
+                    <span class="insp-lbl">Probabilidade Top 1:</span>
+                    <span id="insp-top1-prob" class="mono-bold">-</span>
+                  </div>
+                  <div class="insp-row">
+                    <span class="insp-lbl">Segunda Opção (Top 2):</span>
+                    <span id="insp-top2-class" class="text-dim">-</span>
+                  </div>
+                  <div class="insp-row">
+                    <span class="insp-lbl">Probabilidade Top 2:</span>
+                    <span id="insp-top2-prob" class="mono">-</span>
+                  </div>
+                  <div class="insp-row">
+                    <span class="insp-lbl">Margem (Top1 - Top2):</span>
+                    <span id="insp-margin" class="mono text-amber">-</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Dynamic Legend Card -->
+              <div class="legend-card">
+                <h4>🎨 Legenda de Classes</h4>
+                <div id="dense-dynamic-legend" class="dynamic-legend-list">
+                  <!-- Dynamically populated classes -->
+                </div>
+                <div class="legend-meta-summary">
+                  <span id="dense-total-decisions" class="badge">0 decisões</span>
+                  <span id="dense-context-info" class="meta-note">Suporte 8x8</span>
+                </div>
+              </div>
+
+              <!-- Export Links -->
+              <div class="export-links-card">
+                <h4>📁 Arquivos da Execução</h4>
+                <div class="export-links-list">
+                  <a id="link-download-csv" href="#" target="_blank" class="btn btn-xs btn-outline">📥 classification.csv</a>
+                  <a id="link-download-json" href="#" target="_blank" class="btn btn-xs btn-outline">📋 run.json</a>
+                  <a id="link-download-overlay" href="#" target="_blank" class="btn btn-xs btn-outline">🖼️ overlay.png</a>
+                  <a id="link-download-classmap" href="#" target="_blank" class="btn btn-xs btn-outline">🗺️ class_map.png</a>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Classical Evaluation & Single Classification Section -->
+      <div class="split-layout" style="margin-top: 16px;">
         <!-- Classification Section -->
         <div class="card panel-section">
-          <h3>Classificar Imagem Individual</h3>
+          <h3>Classificar Imagem Individual (8x8)</h3>
           <p class="help-text">Executa <code>./bin/tinyvision classify MODEL IMAGE</code>.</p>
           
           <div class="form-row">

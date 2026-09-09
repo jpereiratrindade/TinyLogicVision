@@ -20,6 +20,7 @@ target_compile_options(tinyvision_core PRIVATE -Wall -Wextra -Wpedantic)
 add_library(tinyvision_application
     src/image.cpp
     src/application.cpp
+    src/dense.cpp
 )
 target_include_directories(tinyvision_application PUBLIC include)
 target_link_libraries(tinyvision_application PUBLIC tinyvision_core PNG::PNG JPEG::JPEG)
@@ -43,6 +44,9 @@ target_link_libraries(tinyvision_classify PRIVATE tinyvision_application)
 add_executable(tinyvision_evaluate src/application_evaluate.cpp)
 target_link_libraries(tinyvision_evaluate PRIVATE tinyvision_application)
 
+add_executable(tinyvision_map src/application_map.cpp)
+target_link_libraries(tinyvision_map PRIVATE tinyvision_application)
+
 enable_testing()
 
 add_executable(gradient_test tests/gradient_test.cpp)
@@ -64,6 +68,10 @@ add_test(NAME spatial_coverage_experiment_test COMMAND spatial_coverage_experime
 add_executable(application_pipeline_test tests/application_pipeline_test.cpp)
 target_link_libraries(application_pipeline_test PRIVATE tinyvision_application)
 add_test(NAME application_pipeline_test COMMAND application_pipeline_test)
+
+add_executable(dense_test tests/dense_test.cpp)
+target_link_libraries(dense_test PRIVATE tinyvision_application)
+add_test(NAME dense_test COMMAND dense_test)
 
 add_test(NAME cli_test COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/tests/cli_test.sh")
 add_test(NAME web_test COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/tests/web_test.py")

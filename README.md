@@ -16,6 +16,11 @@ can now train and apply the same tiny MLP to labeled PNG/JPEG patches.
 | TV-APP-00 | Real RGB application pipeline | READY — natural-image probe not executed |
 | Application CLI | Canonical v0.1 CLI interface | READY |
 | Local Web GUI | Dataset authoring, patch extraction & UI workflow | READY |
+| ROI-level split | Spatial split independence (1 ROI = 1 Split) | READY |
+| Dense patch classification | C++ sliding-window spatial map engine | READY |
+| Uncertainty map | Top-1/top-2 margin thresholding | READY |
+| Sentinel native-pixel mode | 1px=10m native scale tagging (80x80m context) | READY |
+| H3 integration | Geospatial indexing preparation | PLANNED / NOT IMPLEMENTED |
 
 ## Quick start
 
@@ -30,14 +35,15 @@ Launch the self-contained local web interface at `127.0.0.1`:
 The interactive workflow guides you through:
 1. **Abrir Imagem**: Carregue PNG/JPEG local (com indicação se a fonte possui pixels Sentinel-2 nativos de 10 m ou imagem de exibição);
 2. **Definir Classes**: Crie classes rotuladas com cores personalizadas (ou use o preset Sentinel);
-3. **Marcar Regiões (ROIs)**: Desenhe áreas de interesse no canvas e atribua splits (`TRAIN`, `DEV`, `PROBE`);
+3. **Marcar Regiões (ROIs)**: Desenhe áreas de interesse no canvas e atribua splits (`TRAIN`, `DEV`, `PROBE`) respeitando a independência espacial estrita (**1 ROI = 1 Split**);
 4. **Gerar Patches 8x8**: Extraia patches exatos de 8x8 pixels sem interpolação com manifesto de proveniência (`manifest.csv` e `dataset.json`);
 5. **Treinar**: Execute o treinamento canônico C++ (`./bin/tinyvision train`) com métricas em tempo real;
-6. **Classificar & Avaliar**: Classifique novas imagens e avalie splits mantendo o `PROBE` isolado.
+6. **Classificar Imagem em Grade (Mapa Denso)**: Execute a classificação espacial densa em C++ (`./bin/tinyvision map`) com visualização de classes, incerteza, overlay e inspeção espacial interativa;
+7. **Classificar & Avaliar**: Classifique novas imagens 8x8 e avalie splits mantendo o `PROBE` isolado.
 
 ### 2. Linha de Comando (CLI)
 
-Build the release binaries, train, classify, evaluate, and verify via the canonical `./bin/tinyvision` CLI:
+Build the release binaries, train, classify, evaluate, and generate dense classification maps via the canonical `./bin/tinyvision` CLI:
 
 ```bash
 # 1. Build
@@ -47,15 +53,46 @@ cmake --build build
 # 2. Train on a dataset (trains on train/, observes dev/)
 ./bin/tinyvision train ./dataset ./model.tlv
 
-# 3. Classify a single PNG/JPEG image
+# 3. Dense spatial classification map (answers "where does the model see each class?")
+./bin/tinyvision map \
+    model.tlv \
+    sentinel.png \
+    .tinyvision/runs/map01 \
+    --stride 1 \
+    --sentinel-10m
+
+# 4. Classify a single PNG/JPEG 8x8 patch
 ./bin/tinyvision classify ./model.tlv ./example.jpg
 
-# 4. Evaluate on a labeled split
+# 5. Evaluate on a labeled split
 ./bin/tinyvision evaluate ./model.tlv ./dataset/dev
 
-# 5. Verify the entire project suite
+# 6. Verify the entire project suite
 ./bin/tinyvision verify
 ```
+
+### 3. Conceito da Classificação Espacial Densa
+
+- **Janela (Window)**: $8 \times 8$ pixels ($192$ entradas RGB).
+- **Suporte/Contexto Contextual**: $80 \times 80\text{ m}$ nominais quando a fonte é pixel nativo Sentinel-2 ($10\text{ m/px}$).
+- **Espaçamento (Stride)**: Espaçamento entre decisões consecutivas (não altera o tamanho do suporte $8 \times 8$).
+  - Stride 1: decisão a cada $10\text{ m}$ (a cada pixel) usando contexto de $80\text{ m}$.
+  - Stride 2: decisão a cada $20\text{ m}$.
+  - Stride 4: decisão a cada $40\text{ m}$.
+  - Stride 8: decisão a cada $80\text{ m}$ (blocos disjuntos).
+- **Centro Geométrico**: Para uma janela par $8 \times 8$, o centro geométrico exato é $(x + 3.5, y + 3.5)$. A âncora visual inteira de exibição é $(x + 4, y + 4)$.
+- **Incerteza**: Calculada a partir da margem entre as probabilidades top-1 e top-2 ($\text{margin} = p_1 - p_2$). Se $p_1 < \text{confidence\_threshold}$ ou $\text{margin} < \text{margin\_threshold}$, a decisão é marcada como `UNCERTAIN`.
+
+### 4. Papel Futuro do H3 (Preparação Arquitetural)
+
+O H3 **não substitui** a grade raster Sentinel nem o patch $8 \times 8$. O fluxo arquitetural planejado é:
+$$\text{Raster Sentinel} \longrightarrow \text{Patches Nativos } 8 \times 8 \longrightarrow \text{Classificação Densa C++} \longrightarrow \text{Centro Geográfico} \longrightarrow \text{Indexação/Agregação H3}$$
+
+O H3 será utilizado futuramente para:
+1. Seleção espacial balanceada de amostras;
+2. Prevenção de spatial leakage (células H3 disjuntas para TRAIN / DEV / PROBE);
+3. Agregação espacial (classe dominante, proporção por classe, % de incerteza);
+4. Comparação temporal multi-cena e integração com camadas web GIS.
 
 ## Canonical verification
 
