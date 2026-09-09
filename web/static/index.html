@@ -79,24 +79,81 @@
               </label>
             </div>
 
-            <!-- Upload Zone -->
-            <div class="upload-zone" id="drop-zone">
-              <input type="file" id="image-file-input" accept="image/png,image/jpeg,image/jpg,image/tiff,.tif,.tiff,.jp2,.j2k,image/jp2" hidden>
-              <div class="upload-prompt">
-                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-                  <polyline points="17 8 12 3 7 8"></polyline>
-                  <line x1="12" y1="3" x2="12" y2="15"></line>
-                </svg>
-                <span id="upload-prompt-text">Carregar Imagem, GeoTIFF ou Sentinel-2 (.jp2)</span>
-                <small>PNG, JPEG, GeoTIFF (.tif) ou Sentinel-2 JPEG2000 (.jp2)</small>
+            <!-- Source Loading Mode Tabs -->
+            <div class="source-mode-tabs">
+              <button type="button" class="source-mode-btn active" data-src-mode="folder">📁 Pasta Sentinel (.SAFE)</button>
+              <button type="button" class="source-mode-btn" data-src-mode="multiband">🎛️ 4 Bandas (B2,B3,B4,B8)</button>
+              <button type="button" class="source-mode-btn" data-src-mode="single">🖼️ Arquivo / Imagem Única</button>
+            </div>
+
+            <!-- Mode 1: Sentinel Folder / SAFE -->
+            <div id="src-mode-folder" class="src-mode-panel">
+              <p class="help-text">Abra a pasta descompactada do produto Sentinel-2 (diretório <code>.SAFE</code> ou pasta <code>R10m</code> contendo as bandas 10m).</p>
+              <div class="form-row">
+                <input type="file" id="s2-folder-input" webkitdirectory directory multiple hidden>
+                <button id="btn-select-s2-folder" class="btn btn-sm btn-outline btn-block">📂 Selecionar Pasta do Computador</button>
+              </div>
+              <div class="path-input-row">
+                <input type="text" id="s2-folder-path-input" placeholder="Ou cole o caminho da pasta: /caminho/.../R10m" class="input-text input-sm">
+                <button id="btn-open-s2-path" class="btn btn-sm btn-primary">Abrir</button>
+              </div>
+            </div>
+
+            <!-- Mode 2: 4 Individual Bands -->
+            <div id="src-mode-multiband" class="src-mode-panel hidden">
+              <p class="help-text">Selecione os 4 arquivos correspondentes às bandas de 10 m do Sentinel-2 (formato <code>.jp2</code> ou <code>.tif</code>):</p>
+              <div class="band-file-grid">
+                <div class="band-file-field">
+                  <label>Banda 2 (Azul - 490 nm):</label>
+                  <input type="file" id="band-file-b2" accept=".jp2,.j2k,.tif,.tiff" class="input-file input-sm">
+                  <input type="text" id="band-path-b2" placeholder="Ou caminho local: ..._B02_10m.jp2" class="input-text input-xs" style="margin-top: 2px;">
+                </div>
+                <div class="band-file-field">
+                  <label>Banda 3 (Verde - 560 nm):</label>
+                  <input type="file" id="band-file-b3" accept=".jp2,.j2k,.tif,.tiff" class="input-file input-sm">
+                  <input type="text" id="band-path-b3" placeholder="Ou caminho local: ..._B03_10m.jp2" class="input-text input-xs" style="margin-top: 2px;">
+                </div>
+                <div class="band-file-field">
+                  <label>Banda 4 (Vermelho - 665 nm):</label>
+                  <input type="file" id="band-file-b4" accept=".jp2,.j2k,.tif,.tiff" class="input-file input-sm">
+                  <input type="text" id="band-path-b4" placeholder="Ou caminho local: ..._B04_10m.jp2" class="input-text input-xs" style="margin-top: 2px;">
+                </div>
+                <div class="band-file-field">
+                  <label>Banda 8 (NIR - 842 nm):</label>
+                  <input type="file" id="band-file-b8" accept=".jp2,.j2k,.tif,.tiff" class="input-file input-sm">
+                  <input type="text" id="band-path-b8" placeholder="Ou caminho local: ..._B08_10m.jp2" class="input-text input-xs" style="margin-top: 2px;">
+                </div>
+              </div>
+              <button id="btn-load-4-bands" class="btn btn-sm btn-primary btn-block" style="margin-top: 8px;">
+                ⚡ Carregar Conjunto de 4 Bandas Sentinel 10m
+              </button>
+            </div>
+
+            <!-- Mode 3: Single File -->
+            <div id="src-mode-single" class="src-mode-panel hidden">
+              <!-- Upload Zone -->
+              <div class="upload-zone" id="drop-zone">
+                <input type="file" id="image-file-input" accept="image/png,image/jpeg,image/jpg,image/tiff,.tif,.tiff,.jp2,.j2k,image/jp2" hidden>
+                <div class="upload-prompt">
+                  <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                    <polyline points="17 8 12 3 7 8"></polyline>
+                    <line x1="12" y1="3" x2="12" y2="15"></line>
+                  </svg>
+                  <span id="upload-prompt-text">Carregar Arquivo (.jp2, .tif, .png, .jpg)</span>
+                  <small>Clique para selecionar ou arraste o arquivo aqui</small>
+                </div>
+              </div>
+              <div class="path-input-row" style="margin-top: 8px;">
+                <input type="text" id="single-file-path-input" placeholder="Ou caminho local no disco: /caminho/imagem.jp2" class="input-text input-sm">
+                <button id="btn-open-single-path" class="btn btn-sm btn-primary">Abrir</button>
               </div>
             </div>
 
             <!-- Source Details & Schema Metadata -->
             <div id="image-meta" class="meta-box hidden">
               <div class="meta-row">
-                <span class="meta-label">Arquivo:</span>
+                <span class="meta-label">Fonte Carregada:</span>
                 <span id="meta-filename" class="meta-val">-</span>
               </div>
               <div class="meta-row">
@@ -126,18 +183,18 @@
                         <th>Banda</th>
                         <th>Nome</th>
                         <th>Comprimento</th>
-                        <th>Normalização</th>
+                        <th>Arquivo Detectado</th>
                       </tr>
                     </thead>
                     <tbody id="bands-spec-body">
-                      <tr><td>0</td><td><strong>B2</strong></td><td>Azul (Blue)</td><td>490 nm</td><td><code>linear (scale 0.0001)</code></td></tr>
-                      <tr><td>1</td><td><strong>B3</strong></td><td>Verde (Green)</td><td>560 nm</td><td><code>linear (scale 0.0001)</code></td></tr>
-                      <tr><td>2</td><td><strong>B4</strong></td><td>Vermelho (Red)</td><td>665 nm</td><td><code>linear (scale 0.0001)</code></td></tr>
-                      <tr><td>3</td><td><strong>B8</strong></td><td>Infravermelho Próximo (NIR)</td><td>842 nm</td><td><code>linear (scale 0.0001)</code></td></tr>
+                      <tr><td>0</td><td><strong>B2</strong></td><td>Azul (Blue)</td><td>490 nm</td><td id="band-desc-b2" class="mono-small">-</td></tr>
+                      <tr><td>1</td><td><strong>B3</strong></td><td>Verde (Green)</td><td>560 nm</td><td id="band-desc-b3" class="mono-small">-</td></tr>
+                      <tr><td>2</td><td><strong>B4</strong></td><td>Vermelho (Red)</td><td>665 nm</td><td id="band-desc-b4" class="mono-small">-</td></tr>
+                      <tr><td>3</td><td><strong>B8</strong></td><td>Infravermelho Próximo (NIR)</td><td>842 nm</td><td id="band-desc-b8" class="mono-small">-</td></tr>
                     </tbody>
                   </table>
                 </div>
-                <small class="text-dim">Preview visual RGB utiliza composição B4/B3/B2 sem afetar as 4 bandas alimentadas ao modelo.</small>
+                <small class="text-dim">Preview visual True-Color utiliza composição B4/B3/B2 gerada automaticamente para o Canvas.</small>
               </div>
 
               <!-- Geospatial Metadata Card -->

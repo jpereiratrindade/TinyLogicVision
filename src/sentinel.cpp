@@ -37,11 +37,11 @@ Sentinel2Product Sentinel2Product::discover_from_safe(const std::filesystem::pat
     std::vector<std::filesystem::path> b4_matches;
     std::vector<std::filesystem::path> b8_matches;
 
-    // Search patterns for 10m bands (e.g. *B02_10m*, *B03_10m*, *B04_10m*, *B08_10m* or *B02*, *B03*, *B04*, *B08*)
-    std::regex b2_re(R"((_B02_10m|_B02|_B2)\.(jp2|tif|tiff)$)", std::regex::icase);
-    std::regex b3_re(R"((_B03_10m|_B03|_B3)\.(jp2|tif|tiff)$)", std::regex::icase);
-    std::regex b4_re(R"((_B04_10m|_B04|_B4)\.(jp2|tif|tiff)$)", std::regex::icase);
-    std::regex b8_re(R"((_B08_10m|_B08|_B8)\.(jp2|tif|tiff)$)", std::regex::icase);
+    // Search patterns for 10m bands (e.g. B02.jp2, T22..._B02_10m.jp2, B2.tif, etc.)
+    std::regex b2_re(R"((^|[_.-])(B02|B2|B02_10m|B2_10m)\.(jp2|tif|tiff)$)", std::regex::icase);
+    std::regex b3_re(R"((^|[_.-])(B03|B3|B03_10m|B3_10m)\.(jp2|tif|tiff)$)", std::regex::icase);
+    std::regex b4_re(R"((^|[_.-])(B04|B4|B04_10m|B4_10m)\.(jp2|tif|tiff)$)", std::regex::icase);
+    std::regex b8_re(R"((^|[_.-])(B08|B8|B08_10m|B8_10m)\.(jp2|tif|tiff)$)", std::regex::icase);
 
     for (const auto& entry : std::filesystem::recursive_directory_iterator(safe_directory)) {
         if (entry.is_regular_file()) {

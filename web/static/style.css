@@ -1228,6 +1228,83 @@ body {
   margin-left: 4px;
 }
 
+/* Source Loading Mode Tabs */
+.source-mode-tabs {
+  display: flex;
+  gap: 4px;
+  background: var(--bg-primary);
+  padding: 4px;
+  border-radius: var(--radius-sm);
+  margin-bottom: 12px;
+  border: 1px solid var(--border-color);
+}
+
+.source-mode-btn {
+  flex: 1;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 6px 8px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.source-mode-btn:hover {
+  color: var(--text-main);
+  background: var(--bg-tertiary);
+}
+
+.source-mode-btn.active {
+  background: var(--accent-primary);
+  color: #fff;
+}
+
+.src-mode-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.path-input-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.path-input-row input {
+  flex: 1;
+}
+
+.band-file-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--bg-secondary);
+  padding: 10px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+}
+
+.band-file-field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.band-file-field label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.input-xs {
+  font-size: 11px;
+  padding: 4px 6px;
+}
+
 /* Modality Selector Cards */
 .modality-selector-group {
   display: flex;

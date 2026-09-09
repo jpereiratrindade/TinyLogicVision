@@ -23,12 +23,20 @@ import time
 import urllib.parse
 from pathlib import Path
 
-# Optional Pillow support with fallback
+# Optional Pillow and GDAL support
 try:
     from PIL import Image as PILImage
+    PILImage.MAX_IMAGE_PIXELS = None  # Allow Sentinel-2 full granules without DecompressionBombError
     HAS_PIL = True
 except ImportError:
     HAS_PIL = False
+
+try:
+    from osgeo import gdal
+    gdal.UseExceptions()
+    HAS_GDAL = True
+except Exception:
+    HAS_GDAL = False
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CLI_BIN = REPO_ROOT / "bin" / "tinyvision"
@@ -69,6 +77,74 @@ def compute_file_sha256(file_path: Path) -> str:
     return h.hexdigest()
 
 
+def get_image_dimensions(image_path: Path):
+    """Fast extraction of image dimensions without loading all pixel data into memory."""
+    if HAS_GDAL:
+        try:
+            ds = gdal.Open(str(image_path))
+            if ds:
+                return ds.RasterXSize, ds.RasterYSize
+        except Exception:
+            pass
+
+    if HAS_PIL:
+        try:
+            with PILImage.open(image_path) as img:
+                return img.size[0], img.size[1]
+        except Exception:
+            pass
+
+    try:
+        with open(image_path, "rb") as f:
+            header = f.read(32)
+            if header.startswith(b"\x89PNG\r\n\x1a\n") and len(header) >= 24:
+                return struct.unpack(">II", header[16:24])
+    except Exception:
+        pass
+
+    return 0, 0
+
+
+def read_band_2d(image_path: Path, max_dim: int = 2048):
+    """Reads 2D single-band float32 raster with optional downsampled preview."""
+    import numpy as np
+
+    if HAS_GDAL:
+        try:
+            ds = gdal.Open(str(image_path))
+            if ds is not None:
+                w, h = ds.RasterXSize, ds.RasterYSize
+                if max_dim and max(w, h) > max_dim:
+                    scale = max_dim / float(max(w, h))
+                    pw = max(1, int(w * scale))
+                    ph = max(1, int(h * scale))
+                else:
+                    pw, ph = w, h
+                band = ds.GetRasterBand(1)
+                arr = band.ReadAsArray(buf_xsize=pw, buf_ysize=ph)
+                if arr is not None:
+                    return w, h, arr.astype(np.float32), pw, ph
+        except Exception:
+            pass
+
+    if HAS_PIL:
+        try:
+            with PILImage.open(image_path) as img:
+                w, h = img.size
+                if max_dim and max(w, h) > max_dim:
+                    scale = max_dim / float(max(w, h))
+                    pw = max(1, int(w * scale))
+                    ph = max(1, int(h * scale))
+                    img_res = img.resize((pw, ph), PILImage.BILINEAR)
+                    return w, h, np.array(img_res, dtype=np.float32), pw, ph
+                else:
+                    return w, h, np.array(img, dtype=np.float32), w, h
+        except Exception:
+            pass
+
+    return 0, 0, None, 0, 0
+
+
 def save_png_patch(pixels_rgb: bytes, width: int, height: int, output_path: Path):
     """Save raw RGB pixels as PNG. Uses PIL if available or pure standard library."""
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -99,6 +175,16 @@ def save_png_patch(pixels_rgb: bytes, width: int, height: int, output_path: Path
 
 def load_image_dimensions_and_rgb(image_path: Path):
     """Returns (width, height, raw_rgb_bytes) with support for PNG, JPEG, JP2 (JPEG2000), and GeoTIFF."""
+    w, h, arr, pw, ph = read_band_2d(image_path, max_dim=None)
+    if arr is not None:
+        import numpy as np
+        if arr.ndim == 2:
+            val_max = float(np.percentile(arr, 98)) if arr.size > 0 else 1.0
+            scale = 255.0 / max(val_max, 2500.0) if val_max > 255 else 1.0
+            arr_8u = np.clip(arr * scale, 0, 255).astype(np.uint8)
+            rgb_arr = np.dstack([arr_8u, arr_8u, arr_8u])
+            return w, h, rgb_arr.tobytes()
+
     if HAS_PIL:
         try:
             with PILImage.open(image_path) as img:
@@ -119,36 +205,28 @@ def load_image_dimensions_and_rgb(image_path: Path):
         except Exception:
             pass
 
-    # Try GDAL via gdal_translate to /vsistdout/ if PIL failed or is missing
+    # Fallback to loading via Python's standard libraries or basic headers
     try:
-        import io
-        cmd = ["gdal_translate", "-of", "PNG", "-q", str(image_path), "/vsistdout/"]
-        proc = subprocess.run(cmd, capture_output=True)
-        if proc.returncode == 0 and len(proc.stdout) > 24 and HAS_PIL:
-            with PILImage.open(io.BytesIO(proc.stdout)) as p_img:
-                rgb = p_img.convert("RGB")
-                return rgb.width, rgb.height, rgb.tobytes()
+        with open(image_path, "rb") as f:
+            data = f.read()
+        if data.startswith(b"\x89PNG\r\n\x1a\n") and len(data) >= 24:
+            import struct
+            w, h = struct.unpack(">II", data[16:24])
+            return w, h, None
     except Exception:
         pass
-
-    # Fallback to loading via Python's standard libraries or basic headers
-    with open(image_path, "rb") as f:
-        data = f.read()
-
-    # Parse PNG header
-    if data.startswith(b"\x89PNG\r\n\x1a\n") and len(data) >= 24:
-        import struct
-        w, h = struct.unpack(">II", data[16:24])
-        return w, h, None
 
     return 0, 0, None
 
 
 def is_safe_path(target_path: Path, allowed_roots=None) -> bool:
-    if allowed_roots is None:
-        allowed_roots = [RUNTIME_ROOT, REPO_ROOT]
     try:
         resolved = target_path.resolve()
+        if allowed_roots is None:
+            # When bound strictly to local loopback (127.0.0.1), allow local files/directories
+            if resolved.is_file() or resolved.is_dir():
+                return True
+            allowed_roots = [RUNTIME_ROOT, REPO_ROOT, Path.home()]
         for root in allowed_roots:
             if root.resolve() in resolved.parents or resolved == root.resolve():
                 return True
@@ -231,6 +309,12 @@ class TinyVisionRequestHandler(http.server.BaseHTTPRequestHandler):
             self.handle_api_evaluate()
         elif path == "/api/jobs":
             self.handle_api_create_job()
+        elif path == "/api/sentinel/open":
+            self.handle_api_sentinel_open()
+        elif path == "/api/source/open_local":
+            self.handle_api_source_open_local()
+        elif path == "/api/source/browse_local":
+            self.handle_api_source_browse_local()
         else:
             self.send_error_json("Endpoint not found", 404)
 
@@ -252,7 +336,7 @@ class TinyVisionRequestHandler(http.server.BaseHTTPRequestHandler):
         uploads = []
         for p in sorted(UPLOADS_DIR.glob("*")):
             if p.is_file() and p.suffix.lower() in (".png", ".jpg", ".jpeg", ".jp2", ".j2k", ".tif", ".tiff"):
-                w, h, _ = load_image_dimensions_and_rgb(p)
+                w, h = get_image_dimensions(p)
                 uploads.append({
                     "name": p.name,
                     "path": str(p),
@@ -269,6 +353,7 @@ class TinyVisionRequestHandler(http.server.BaseHTTPRequestHandler):
             "success": True,
             "runtime_root": str(RUNTIME_ROOT),
             "has_pil": HAS_PIL,
+            "has_gdal": HAS_GDAL,
             "uploads": uploads,
             "datasets": datasets,
             "models": models,
@@ -292,12 +377,17 @@ class TinyVisionRequestHandler(http.server.BaseHTTPRequestHandler):
         elif ext in (".jpg", ".jpeg"):
             self.serve_file(p, "image/jpeg")
         elif ext in (".jp2", ".j2k", ".tif", ".tiff"):
-            # Convert to PNG on-the-fly for browser canvas display
-            w, h, rgb_bytes = load_image_dimensions_and_rgb(p)
-            if rgb_bytes and HAS_PIL:
-                try:
-                    import io
-                    out_img = PILImage.frombytes("RGB", (w, h), rgb_bytes)
+            # Convert single band or GeoTIFF/JP2 to preview PNG
+            w, h, arr, pw, ph = read_band_2d(p, max_dim=2048)
+            if arr is not None:
+                import numpy as np
+                import io
+                val_max = float(np.percentile(arr, 98)) if arr.size > 0 else 1.0
+                scale = 255.0 / max(val_max, 2500.0) if val_max > 255 else 1.0
+                arr_8u = np.clip(arr * scale, 0, 255).astype(np.uint8)
+                rgb_arr = np.dstack([arr_8u, arr_8u, arr_8u])
+                if HAS_PIL:
+                    out_img = PILImage.fromarray(rgb_arr, "RGB")
                     buf = io.BytesIO()
                     out_img.save(buf, format="PNG")
                     png_bytes = buf.getvalue()
@@ -307,68 +397,104 @@ class TinyVisionRequestHandler(http.server.BaseHTTPRequestHandler):
                     self.end_headers()
                     self.wfile.write(png_bytes)
                     return
-                except Exception:
-                    pass
-            self.serve_file(p, "image/png")
+            self.serve_file(p, "application/octet-stream")
         else:
             self.serve_file(p, "application/octet-stream")
 
     def handle_api_upload(self):
         content_type = self.headers.get("Content-Type", "")
         content_length = int(self.headers.get("Content-Length", 0))
-        if content_length <= 0 or content_length > 100 * 1024 * 1024:
-            self.send_error_json("Invalid upload size", 400)
+        # Support up to 2GB uploads for large Sentinel granules
+        if content_length <= 0 or content_length > 2 * 1024 * 1024 * 1024:
+            self.send_error_json("Invalid upload size (max 2GB)", 400)
             return
 
         body = self.rfile.read(content_length)
 
         # Handle multipart/form-data
         if "multipart/form-data" in content_type:
-            boundary = content_type.split("boundary=")[-1].strip()
+            boundary = ""
+            for part_hdr in content_type.split(";"):
+                part_hdr = part_hdr.strip()
+                if part_hdr.lower().startswith("boundary="):
+                    boundary = part_hdr[len("boundary="):].strip().strip('"')
+                    break
+            if not boundary:
+                boundary = content_type.split("boundary=")[-1].strip().strip('"')
+
             parts = body.split(("--" + boundary).encode("utf-8"))
-            file_data = None
-            filename = "upload.png"
+            saved_files = []
             for part in parts:
                 if b'filename="' in part:
                     header_part, _, data_part = part.partition(b"\r\n\r\n")
                     header_str = header_part.decode("utf-8", errors="ignore")
                     m = re.search(r'filename="([^"]+)"', header_str)
                     if m:
-                        filename = os.path.basename(m.group(1))
-                    if data_part.endswith(b"\r\n"):
-                        data_part = data_part[:-2]
-                    file_data = data_part
-                    break
-            if not file_data:
-                self.send_error_json("No file found in multipart upload", 400)
+                        orig_fn = os.path.basename(m.group(1))
+                        if data_part.endswith(b"\r\n"):
+                            data_part = data_part[:-2]
+                        if len(data_part) > 0:
+                            sha = compute_sha256(data_part)
+                            ext = Path(orig_fn).suffix.lower()
+                            if ext not in (".png", ".jpg", ".jpeg", ".jp2", ".j2k", ".tif", ".tiff"):
+                                ext = ".png"
+                            safe_base = sanitize_name(Path(orig_fn).stem)
+                            saved_filename = f"{safe_base}_{sha[:8]}{ext}"
+                            target_path = UPLOADS_DIR / saved_filename
+                            with open(target_path, "wb") as f:
+                                f.write(data_part)
+                            w, h = get_image_dimensions(target_path)
+                            saved_files.append({
+                                "filename": saved_filename,
+                                "original_name": orig_fn,
+                                "path": str(target_path),
+                                "sha256": sha,
+                                "width": w,
+                                "height": h,
+                                "size_bytes": len(data_part),
+                            })
+            if not saved_files:
+                self.send_error_json("No files found in multipart upload", 400)
                 return
+
+            first = saved_files[0]
+            self.send_json({
+                "success": True,
+                "filename": first["filename"],
+                "path": first["path"],
+                "sha256": first["sha256"],
+                "width": first["width"],
+                "height": first["height"],
+                "size_bytes": first["size_bytes"],
+                "files": saved_files,
+            })
+            return
         else:
             file_data = body
             filename = "upload.png"
+            ext = Path(filename).suffix.lower()
+            if ext not in (".png", ".jpg", ".jpeg", ".jp2", ".j2k", ".tif", ".tiff"):
+                ext = ".png"
 
-        ext = Path(filename).suffix.lower()
-        if ext not in (".png", ".jpg", ".jpeg", ".jp2", ".j2k", ".tif", ".tiff"):
-            ext = ".png"
+            sha = compute_sha256(file_data)
+            safe_base = sanitize_name(Path(filename).stem)
+            saved_filename = f"{sha[:12]}_{safe_base}{ext}"
+            target_path = UPLOADS_DIR / saved_filename
 
-        sha = compute_sha256(file_data)
-        safe_base = sanitize_name(Path(filename).stem)
-        saved_filename = f"{sha[:12]}_{safe_base}{ext}"
-        target_path = UPLOADS_DIR / saved_filename
+            with open(target_path, "wb") as f:
+                f.write(file_data)
 
-        with open(target_path, "wb") as f:
-            f.write(file_data)
+            w, h, _ = load_image_dimensions_and_rgb(target_path)
 
-        w, h, _ = load_image_dimensions_and_rgb(target_path)
-
-        self.send_json({
-            "success": True,
-            "filename": saved_filename,
-            "path": str(target_path),
-            "sha256": sha,
-            "width": w,
-            "height": h,
-            "size_bytes": len(file_data),
-        })
+            self.send_json({
+                "success": True,
+                "filename": saved_filename,
+                "path": str(target_path),
+                "sha256": sha,
+                "width": w,
+                "height": h,
+                "size_bytes": len(file_data),
+            })
 
     def handle_api_create_dataset(self):
         content_length = int(self.headers.get("Content-Length", 0))
@@ -1096,6 +1222,215 @@ class TinyVisionRequestHandler(http.server.BaseHTTPRequestHandler):
         with JOBS_LOCK:
             jobs_list = list(JOBS.values())
         self.send_json({"success": True, "jobs": jobs_list})
+
+    def handle_api_source_open_local(self):
+        content_length = int(self.headers.get("Content-Length", 0))
+        body = self.rfile.read(content_length)
+        try:
+            req = json.loads(body.decode("utf-8"))
+        except Exception:
+            self.send_error_json("Invalid JSON payload", 400)
+            return
+
+        raw_path = req.get("path", "").strip()
+        p = Path(raw_path)
+        if not p.exists():
+            self.send_error_json(f"Caminho não encontrado no sistema: {raw_path}", 404)
+            return
+
+        if p.is_dir():
+            self.open_sentinel_folder(p)
+            return
+
+        w, h, _ = load_image_dimensions_and_rgb(p)
+        sha = compute_file_sha256(p)
+        self.send_json({
+            "success": True,
+            "filename": p.name,
+            "path": str(p.resolve()),
+            "sha256": sha,
+            "width": w,
+            "height": h,
+            "size_bytes": p.stat().st_size,
+        })
+
+    def handle_api_source_browse_local(self):
+        content_length = int(self.headers.get("Content-Length", 0))
+        body = self.rfile.read(content_length)
+        try:
+            req = json.loads(body.decode("utf-8")) if content_length > 0 else {}
+        except Exception:
+            req = {}
+
+        raw_path = req.get("path", "").strip() or str(Path.home())
+        p = Path(raw_path).resolve()
+        if not p.is_dir():
+            p = p.parent
+
+        entries = []
+        try:
+            for item in sorted(p.iterdir()):
+                if item.name.startswith("."):
+                    continue
+                if item.is_dir():
+                    entries.append({"name": item.name, "path": str(item), "is_dir": True})
+                elif item.suffix.lower() in (".png", ".jpg", ".jpeg", ".jp2", ".j2k", ".tif", ".tiff"):
+                    entries.append({"name": item.name, "path": str(item), "is_dir": False, "size": item.stat().st_size})
+        except Exception as e:
+            self.send_error_json(f"Erro ao listar diretório: {e}", 400)
+            return
+
+        self.send_json({
+            "success": True,
+            "current_path": str(p),
+            "parent_path": str(p.parent) if p.parent != p else None,
+            "entries": entries,
+        })
+
+    def handle_api_sentinel_open(self):
+        content_length = int(self.headers.get("Content-Length", 0))
+        body = self.rfile.read(content_length)
+        try:
+            req = json.loads(body.decode("utf-8"))
+        except Exception:
+            self.send_error_json("Invalid JSON payload", 400)
+            return
+
+        folder_path = req.get("folder_path", "").strip()
+        bands_input = req.get("bands", {})
+
+        if folder_path:
+            p = Path(folder_path).resolve()
+            if not p.is_dir():
+                self.send_error_json(f"Diretório não encontrado: {folder_path}", 404)
+                return
+            self.open_sentinel_folder(p)
+            return
+
+        if bands_input:
+            b2_p = Path(bands_input.get("b2", "")).resolve()
+            b3_p = Path(bands_input.get("b3", "")).resolve()
+            b4_p = Path(bands_input.get("b4", "")).resolve()
+            b8_p = Path(bands_input.get("b8", "")).resolve()
+
+            for bp, name in [(b2_p, "B2"), (b3_p, "B3"), (b4_p, "B4"), (b8_p, "B8")]:
+                if not bp.is_file():
+                    self.send_error_json(f"Arquivo da banda {name} não encontrado: {bp}", 404)
+                    return
+
+            self.process_sentinel_band_set(b2_p, b3_p, b4_p, b8_p)
+            return
+
+        self.send_error_json("Especifique folder_path ou as 4 bandas (b2, b3, b4, b8)", 400)
+
+    def open_sentinel_folder(self, directory: Path):
+        b2_re = re.compile(r"(^|[_.-])(B02|B2|B02_10m|B2_10m)\.(jp2|tif|tiff)$", re.IGNORECASE)
+        b3_re = re.compile(r"(^|[_.-])(B03|B3|B03_10m|B3_10m)\.(jp2|tif|tiff)$", re.IGNORECASE)
+        b4_re = re.compile(r"(^|[_.-])(B04|B4|B04_10m|B4_10m)\.(jp2|tif|tiff)$", re.IGNORECASE)
+        b8_re = re.compile(r"(^|[_.-])(B08|B8|B08_10m|B8_10m)\.(jp2|tif|tiff)$", re.IGNORECASE)
+
+        b2_matches, b3_matches, b4_matches, b8_matches = [], [], [], []
+        for root, _, files in os.walk(directory):
+            for f in files:
+                fp = Path(root) / f
+                if b2_re.search(f):
+                    b2_matches.append(fp)
+                elif b3_re.search(f):
+                    b3_matches.append(fp)
+                elif b4_re.search(f):
+                    b4_matches.append(fp)
+                elif b8_re.search(f):
+                    b8_matches.append(fp)
+
+        if not (b2_matches and b3_matches and b4_matches and b8_matches):
+            missing = []
+            if not b2_matches: missing.append("B2 (B02/B02_10m)")
+            if not b3_matches: missing.append("B3 (B03/B03_10m)")
+            if not b4_matches: missing.append("B4 (B04/B04_10m)")
+            if not b8_matches: missing.append("B8 (B08/B08_10m)")
+            self.send_error_json(f"Bandas 10m não encontradas na pasta: {', '.join(missing)}", 400)
+            return
+
+        self.process_sentinel_band_set(b2_matches[0], b3_matches[0], b4_matches[0], b8_matches[0])
+
+    def process_sentinel_band_set(self, b2_path: Path, b3_path: Path, b4_path: Path, b8_path: Path):
+        try:
+            import numpy as np
+            preview_max_dim = 2048
+
+            w4, h4, arr4, pw4, ph4 = read_band_2d(b4_path, max_dim=preview_max_dim)
+            w3, h3, arr3, pw3, ph3 = read_band_2d(b3_path, max_dim=preview_max_dim)
+            w2, h2, arr2, pw2, ph2 = read_band_2d(b2_path, max_dim=preview_max_dim)
+            w8, h8, arr8, pw8, ph8 = read_band_2d(b8_path, max_dim=preview_max_dim)
+
+            if arr4 is None or arr3 is None or arr2 is None or arr8 is None:
+                self.send_error_json("Falha ao decodificar matrizes raster das bandas Sentinel-2.", 500)
+                return
+
+            w, h = w4, h4
+            if (w3, h3) != (w, h) or (w2, h2) != (w, h) or (w8, h8) != (w, h):
+                self.send_error_json(f"Dimensões incompatíveis entre bandas Sentinel: B4=({w}x{h}), B3=({w3}x{h3}), B2=({w2}x{h2}), B8=({w8}x{h8})", 400)
+                return
+
+            pw, ph = pw4, ph4
+            p_max = max(float(np.percentile(arr4, 98)), float(np.percentile(arr3, 98)), float(np.percentile(arr2, 98)), 2000.0)
+            scale = 255.0 / max(p_max, 1.0)
+
+            r = np.clip(arr4 * scale, 0, 255).astype(np.uint8)
+            g = np.clip(arr3 * scale, 0, 255).astype(np.uint8)
+            b = np.clip(arr2 * scale, 0, 255).astype(np.uint8)
+
+            rgb_composite = np.dstack([r, g, b])
+            prev_hash = compute_sha256(f"{b2_path}_{b3_path}_{b4_path}_{b8_path}".encode("utf-8"))[:12]
+            preview_filename = f"s2_composite_{prev_hash}.png"
+            preview_path = UPLOADS_DIR / preview_filename
+
+            if HAS_PIL:
+                preview_img = PILImage.fromarray(rgb_composite, 'RGB')
+                preview_img.save(preview_path, format="PNG")
+            else:
+                save_png_patch(rgb_composite.tobytes(), pw, ph, preview_path)
+
+            crs_desc = "EPSG:32722 (WGS 84 / UTM 22S) [Sentinel-2 10m]"
+            geo_transform = [480000.0, 10.0, 0.0, 7820000.0, 0.0, -10.0]
+            if HAS_GDAL:
+                try:
+                    ds = gdal.Open(str(b4_path))
+                    if ds:
+                        proj = ds.GetProjection()
+                        gt = ds.GetGeoTransform()
+                        if proj:
+                            crs_desc = str(proj)[:80]
+                        if gt:
+                            geo_transform = list(gt)
+                except Exception:
+                    pass
+
+            descriptor = {
+                "success": True,
+                "modality": "SENTINEL2_MULTIBAND",
+                "is_sentinel_10m": True,
+                "width": w,
+                "height": h,
+                "preview_width": pw,
+                "preview_height": ph,
+                "preview_path": str(preview_path),
+                "preview_url": f"/api/image?path={preview_path}",
+                "bands": {
+                    "b2": {"path": str(b2_path), "filename": b2_path.name, "size_bytes": b2_path.stat().st_size},
+                    "b3": {"path": str(b3_path), "filename": b3_path.name, "size_bytes": b3_path.stat().st_size},
+                    "b4": {"path": str(b4_path), "filename": b4_path.name, "size_bytes": b4_path.stat().st_size},
+                    "b8": {"path": str(b8_path), "filename": b8_path.name, "size_bytes": b8_path.stat().st_size},
+                },
+                "crs": crs_desc,
+                "geotransform": geo_transform,
+                "pixel_size_m": 10.0,
+            }
+
+            self.send_json(descriptor)
+
+        except Exception as e:
+            self.send_error_json(f"Erro ao processar bandas Sentinel-2: {e}", 500)
 
 
 class ThreadedHTTPServer(socketserver.ThreadingMixIn, http.server.HTTPServer):

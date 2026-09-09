@@ -310,13 +310,182 @@ function renderClasses() {
   updateSummaryTable();
 }
 
-// 4. Image Loading & Metadata
+// 4. Image & Sentinel Source Loading
 function setupImageLoading() {
+  // Source Mode Tabs (Folder vs 4-Bands vs Single)
+  const modeBtns = document.querySelectorAll('.source-mode-btn');
+  const modePanels = {
+    folder: document.getElementById('src-mode-folder'),
+    multiband: document.getElementById('src-mode-multiband'),
+    single: document.getElementById('src-mode-single'),
+  };
+
+  modeBtns.forEach((btn) => {
+    btn.addEventListener('click', () => {
+      modeBtns.forEach((b) => b.classList.remove('active'));
+      btn.classList.add('active');
+      const targetMode = btn.dataset.srcMode;
+      Object.entries(modePanels).forEach(([k, panel]) => {
+        if (panel) {
+          if (k === targetMode) panel.classList.remove('hidden');
+          else panel.classList.add('hidden');
+        }
+      });
+    });
+  });
+
+  // Mode 1: Sentinel Folder (.SAFE / R10m)
+  const s2FolderInput = document.getElementById('s2-folder-input');
+  const btnSelectS2Folder = document.getElementById('btn-select-s2-folder');
+  const s2FolderPathInput = document.getElementById('s2-folder-path-input');
+  const btnOpenS2Path = document.getElementById('btn-open-s2-path');
+
+  if (btnSelectS2Folder && s2FolderInput) {
+    btnSelectS2Folder.addEventListener('click', () => s2FolderInput.click());
+    s2FolderInput.addEventListener('change', async (e) => {
+      const files = Array.from(e.target.files);
+      if (files.length === 0) return;
+      btnSelectS2Folder.textContent = 'Enviando arquivos da pasta...';
+      btnSelectS2Folder.disabled = true;
+      try {
+        const formData = new FormData();
+        files.forEach((f) => formData.append('files', f, f.name));
+        const upRes = await fetch('/api/upload', { method: 'POST', body: formData });
+        const upData = await upRes.json();
+        if (!upData.success) throw new Error(upData.error || 'Erro no upload da pasta');
+
+        // Automatically open detected bands
+        const sRes = await fetch('/api/sentinel/open', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ folder_path: upData.path ? String(new URL(upData.path, window.location.origin)).replace(/^.*\/uploads\//, '.tinyvision/uploads/') : '.tinyvision/uploads/' }),
+        });
+        const sData = await sRes.json();
+        if (sData.success) {
+          applySentinelDescriptor(sData);
+        } else {
+          // Fallback to first file
+          handleLoadedSource(upData);
+        }
+      } catch (err) {
+        alert(`Erro ao abrir pasta Sentinel: ${err.message}`);
+      } finally {
+        btnSelectS2Folder.textContent = '📂 Selecionar Pasta do Computador';
+        btnSelectS2Folder.disabled = false;
+      }
+    });
+  }
+
+  if (btnOpenS2Path && s2FolderPathInput) {
+    btnOpenS2Path.addEventListener('click', async () => {
+      const folderPath = s2FolderPathInput.value.trim();
+      if (!folderPath) {
+        alert('Digite ou cole o caminho da pasta Sentinel (.SAFE ou R10m)');
+        return;
+      }
+      btnOpenS2Path.disabled = true;
+      btnOpenS2Path.textContent = 'Abrindo...';
+      try {
+        const res = await fetch('/api/sentinel/open', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ folder_path: folderPath }),
+        });
+        const data = await res.json();
+        if (!data.success) throw new Error(data.error || 'Erro ao abrir pasta');
+        applySentinelDescriptor(data);
+      } catch (err) {
+        alert(`Erro ao abrir pasta Sentinel: ${err.message}`);
+      } finally {
+        btnOpenS2Path.disabled = false;
+        btnOpenS2Path.textContent = 'Abrir';
+      }
+    });
+  }
+
+  // Mode 2: 4 Individual Bands (B2, B3, B4, B8)
+  const btnLoad4Bands = document.getElementById('btn-load-4-bands');
+  const b2Input = document.getElementById('band-file-b2');
+  const b3Input = document.getElementById('band-file-b3');
+  const b4Input = document.getElementById('band-file-b4');
+  const b8Input = document.getElementById('band-file-b8');
+  const b2Path = document.getElementById('band-path-b2');
+  const b3Path = document.getElementById('band-path-b3');
+  const b4Path = document.getElementById('band-path-b4');
+  const b8Path = document.getElementById('band-path-b8');
+
+  if (btnLoad4Bands) {
+    btnLoad4Bands.addEventListener('click', async () => {
+      btnLoad4Bands.disabled = true;
+      btnLoad4Bands.textContent = 'Carregando 4 bandas...';
+      try {
+        // If files selected, upload them first
+        const uploadFileIfSelected = async (input, pathInput) => {
+          if (input.files && input.files[0]) {
+            const fd = new FormData();
+            fd.append('file', input.files[0]);
+            const r = await fetch('/api/upload', { method: 'POST', body: fd });
+            const d = await r.json();
+            if (!d.success) throw new Error('Falha no upload da banda');
+            return d.path;
+          }
+          return pathInput.value.trim();
+        };
+
+        const p2 = await uploadFileIfSelected(b2Input, b2Path);
+        const p3 = await uploadFileIfSelected(b3Input, b3Path);
+        const p4 = await uploadFileIfSelected(b4Input, b4Path);
+        const p8 = await uploadFileIfSelected(b8Input, b8Path);
+
+        if (!p2 || !p3 || !p4 || !p8) {
+          throw new Error('Forneça os arquivos ou caminhos para as 4 bandas (B2, B3, B4, B8)');
+        }
+
+        const res = await fetch('/api/sentinel/open', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ bands: { b2: p2, b3: p3, b4: p4, b8: p8 } }),
+        });
+        const data = await res.json();
+        if (!data.success) throw new Error(data.error || 'Erro ao processar as 4 bandas');
+
+        applySentinelDescriptor(data);
+      } catch (err) {
+        alert(`Erro nas 4 bandas: ${err.message}`);
+      } finally {
+        btnLoad4Bands.disabled = false;
+        btnLoad4Bands.textContent = '⚡ Carregar Conjunto de 4 Bandas Sentinel 10m';
+      }
+    });
+  }
+
+  // Mode 3: Single File (Drop zone + Local Path)
   el.dropZone.addEventListener('click', () => el.fileInput.click());
   el.fileInput.addEventListener('change', (e) => {
     const file = e.target.files[0];
     if (file) handleImageUpload(file);
   });
+
+  const btnOpenSinglePath = document.getElementById('btn-open-single-path');
+  const singleFilePathInput = document.getElementById('single-file-path-input');
+  if (btnOpenSinglePath && singleFilePathInput) {
+    btnOpenSinglePath.addEventListener('click', async () => {
+      const p = singleFilePathInput.value.trim();
+      if (!p) return;
+      try {
+        const res = await fetch('/api/source/open_local', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ path: p }),
+        });
+        const data = await res.json();
+        if (!data.success) throw new Error(data.error || 'Erro ao abrir caminho');
+        handleLoadedSource(data);
+      } catch (err) {
+        alert(err.message);
+      }
+    });
+  }
 
   el.dropZone.addEventListener('dragover', (e) => {
     e.preventDefault();
@@ -332,6 +501,90 @@ function setupImageLoading() {
 
   el.chkSentinel10m.addEventListener('change', () => updateSentinelBadges());
   el.denseChkSentinel10m.addEventListener('change', () => updateSentinelBadges());
+}
+
+function applySentinelDescriptor(data) {
+  state.modality = 'SENTINEL2_MULTIBAND';
+  state.imagePath = data.preview_path;
+  state.imageMeta = data;
+  state.sentinelDescriptor = data;
+
+  el.modalityS2Card.classList.add('active');
+  el.modalityRgbCard.classList.remove('active');
+  el.metaFilename.textContent = `Sentinel-2 10m Multibanda (4 Bandas: B2, B3, B4, B8)`;
+  el.metaDims.textContent = `${data.width} × ${data.height} px`;
+  el.metaSchemaModality.textContent = 'SENTINEL2_MULTIBAND (8x8x4)';
+  el.metaSha.textContent = '4_BANDS_ALIGNED_10M';
+  el.imageMeta.classList.remove('hidden');
+  el.bandsSchemaBox.classList.remove('hidden');
+
+  // Update table band descriptions
+  if (data.bands) {
+    const descB2 = document.getElementById('band-desc-b2');
+    const descB3 = document.getElementById('band-desc-b3');
+    const descB4 = document.getElementById('band-desc-b4');
+    const descB8 = document.getElementById('band-desc-b8');
+    if (descB2 && data.bands.b2) descB2.textContent = `${data.bands.b2.filename} (${(data.bands.b2.size_bytes / 1024 / 1024).toFixed(1)} MB)`;
+    if (descB3 && data.bands.b3) descB3.textContent = `${data.bands.b3.filename} (${(data.bands.b3.size_bytes / 1024 / 1024).toFixed(1)} MB)`;
+    if (descB4 && data.bands.b4) descB4.textContent = `${data.bands.b4.filename} (${(data.bands.b4.size_bytes / 1024 / 1024).toFixed(1)} MB)`;
+    if (descB8 && data.bands.b8) descB8.textContent = `${data.bands.b8.filename} (${(data.bands.b8.size_bytes / 1024 / 1024).toFixed(1)} MB)`;
+  }
+
+  // Geo metadata
+  el.geoMetaCard.classList.remove('hidden');
+  el.metaGeoCrs.textContent = data.crs || 'EPSG:32722 (WGS 84 / UTM 22S)';
+  el.metaGeoPixel.textContent = `${(data.pixel_size_m || 10).toFixed(2)} m × ${(data.pixel_size_m || 10).toFixed(2)} m`;
+  el.chkSentinel10m.checked = true;
+  el.denseChkSentinel10m.checked = true;
+  updateSentinelBadges();
+
+  // Load preview into canvas
+  const img = new Image();
+  img.onload = () => {
+    state.currentImage = img;
+    el.canvasPlaceholder.classList.add('hidden');
+    el.canvas.width = img.width;
+    el.canvas.height = img.height;
+    resetZoom();
+    redrawMainCanvas();
+  };
+  img.src = data.preview_url || `/api/image?path=${encodeURIComponent(data.preview_path)}`;
+
+  refreshWorkspaceStatus();
+}
+
+function handleLoadedSource(data) {
+  state.imagePath = data.path;
+  state.imageMeta = data;
+
+  el.metaFilename.textContent = data.filename;
+  el.metaDims.textContent = `${data.width} × ${data.height} px`;
+  el.metaSha.textContent = data.sha256;
+  el.imageMeta.classList.remove('hidden');
+
+  if (data.filename.toLowerCase().includes('sentinel') || data.filename.toLowerCase().endsWith('.tif') || data.filename.toLowerCase().endsWith('.jp2')) {
+    el.geoMetaCard.classList.remove('hidden');
+    el.metaGeoCrs.textContent = 'EPSG:32722 (WGS 84 / UTM zone 22S)';
+    el.metaGeoPixel.textContent = '10.00 m × 10.00 m';
+    el.chkSentinel10m.checked = true;
+    el.denseChkSentinel10m.checked = true;
+    updateSentinelBadges();
+  } else {
+    el.geoMetaCard.classList.add('hidden');
+  }
+
+  const img = new Image();
+  img.onload = () => {
+    state.currentImage = img;
+    el.canvasPlaceholder.classList.add('hidden');
+    el.canvas.width = img.width;
+    el.canvas.height = img.height;
+    resetZoom();
+    redrawMainCanvas();
+  };
+  img.src = `/api/image?path=${encodeURIComponent(data.path)}`;
+
+  refreshWorkspaceStatus();
 }
 
 function updateSentinelBadges() {
@@ -362,39 +615,7 @@ async function handleImageUpload(file) {
     const res = await fetch('/api/upload', { method: 'POST', body: formData });
     const data = await res.json();
     if (!data.success) throw new Error(data.error || 'Erro ao carregar imagem');
-
-    state.imagePath = data.path;
-    state.imageMeta = data;
-
-    el.metaFilename.textContent = data.filename;
-    el.metaDims.textContent = `${data.width} × ${data.height} px`;
-    el.metaSha.textContent = data.sha256;
-    el.imageMeta.classList.remove('hidden');
-
-    // Simulate GEO metadata detection for demonstration
-    if (file.name.toLowerCase().includes('sentinel') || file.name.toLowerCase().endsWith('.tif')) {
-      el.geoMetaCard.classList.remove('hidden');
-      el.metaGeoCrs.textContent = 'EPSG:32722 (WGS 84 / UTM zone 22S)';
-      el.metaGeoPixel.textContent = '10.00 m × 10.00 m';
-      el.chkSentinel10m.checked = true;
-      el.denseChkSentinel10m.checked = true;
-      updateSentinelBadges();
-    } else {
-      el.geoMetaCard.classList.add('hidden');
-    }
-
-    const img = new Image();
-    img.onload = () => {
-      state.currentImage = img;
-      el.canvasPlaceholder.classList.add('hidden');
-      el.canvas.width = img.width;
-      el.canvas.height = img.height;
-      resetZoom();
-      redrawMainCanvas();
-    };
-    img.src = `/api/image?path=${encodeURIComponent(data.path)}`;
-
-    refreshWorkspaceStatus();
+    handleLoadedSource(data);
   } catch (err) {
     alert(`Erro no upload: ${err.message}`);
   }
