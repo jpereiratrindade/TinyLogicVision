@@ -11,9 +11,14 @@ extern "C" {
 #include <cctype>
 #include <cstdio>
 #include <cstdlib>
+#include <limits>
 #include <setjmp.h>
 #include <stdexcept>
 #include <string>
+
+#ifdef TINYVISION_WITH_GDAL
+#include <gdal_priv.h>
+#endif
 
 namespace tinyvision {
 namespace {
@@ -118,57 +123,57 @@ RgbImage load_jpeg(const std::filesystem::path& path) {
     return image;
 }
 
-RgbImage load_png_from_bytes(const void* data, std::size_t size) {
-    png_image png{};
-    png.version = PNG_IMAGE_VERSION;
-    if (png_image_begin_read_from_memory(&png, data, size) == 0) {
-        throw std::runtime_error("cannot read PNG from memory: " + std::string(png.message));
-    }
-    png.format = PNG_FORMAT_RGB;
-
-    RgbImage image;
-    image.width = png.width;
-    image.height = png.height;
-    image.pixels.resize(PNG_IMAGE_SIZE(png));
-    if (png_image_finish_read(&png, nullptr, image.pixels.data(), 0, nullptr) == 0) {
-        const std::string message = png.message;
-        png_image_free(&png);
-        throw std::runtime_error("cannot decode PNG from memory: " + message);
-    }
-    png_image_free(&png);
-    return image;
-}
-
 RgbImage load_jp2_or_gdal(const std::filesystem::path& path) {
-    std::string cmd = "gdal_translate -of PNG -q \"" + path.string() + "\" /vsistdout/ 2>/dev/null";
-    std::FILE* pipe = popen(cmd.c_str(), "r");
-    if (pipe) {
-        std::vector<std::uint8_t> buffer;
-        std::uint8_t chunk[4096];
-        while (std::size_t bytes = std::fread(chunk, 1, sizeof(chunk), pipe)) {
-            buffer.insert(buffer.end(), chunk, chunk + bytes);
-        }
-        int status = pclose(pipe);
-        if (status == 0 && buffer.size() > 24) {
-            return load_png_from_bytes(buffer.data(), buffer.size());
-        }
+#ifdef TINYVISION_WITH_GDAL
+    GDALAllRegister();
+    auto* dataset = static_cast<GDALDataset*>(GDALOpenEx(
+        path.string().c_str(), GDAL_OF_RASTER | GDAL_OF_READONLY,
+        nullptr, nullptr, nullptr));
+    if (dataset == nullptr) {
+        throw std::runtime_error("cannot decode JP2/TIFF image with GDAL: " + path.string());
     }
 
-    std::string cmd_convert = "convert \"" + path.string() + "\" png:- 2>/dev/null";
-    std::FILE* pipe_conv = popen(cmd_convert.c_str(), "r");
-    if (pipe_conv) {
-        std::vector<std::uint8_t> buffer;
-        std::uint8_t chunk[4096];
-        while (std::size_t bytes = std::fread(chunk, 1, sizeof(chunk), pipe_conv)) {
-            buffer.insert(buffer.end(), chunk, chunk + bytes);
+    try {
+        const auto width = static_cast<std::size_t>(dataset->GetRasterXSize());
+        const auto height = static_cast<std::size_t>(dataset->GetRasterYSize());
+        if (width == 0 || height == 0 || dataset->GetRasterCount() < 1 ||
+            width > std::numeric_limits<std::size_t>::max() / height / 3) {
+            throw std::runtime_error("invalid JP2/TIFF raster dimensions: " + path.string());
         }
-        int status_conv = pclose(pipe_conv);
-        if (status_conv == 0 && buffer.size() > 24) {
-            return load_png_from_bytes(buffer.data(), buffer.size());
-        }
-    }
 
-    throw std::runtime_error("cannot decode JP2/TIFF image " + path.string() + ": gdal_translate or convert required");
+        RgbImage image;
+        image.width = width;
+        image.height = height;
+        image.pixels.resize(width * height * 3);
+        const int source_channels = dataset->GetRasterCount() >= 3 ? 3 : 1;
+        std::vector<double> values(width * height);
+
+        for (int output_channel = 0; output_channel < 3; ++output_channel) {
+            const int source_channel = source_channels == 1 ? 1 : output_channel + 1;
+            auto* band = dataset->GetRasterBand(source_channel);
+            if (band->RasterIO(GF_Read, 0, 0,
+                               static_cast<int>(width), static_cast<int>(height),
+                               values.data(), static_cast<int>(width), static_cast<int>(height),
+                               GDT_Float64, 0, 0, nullptr) != CE_None) {
+                throw std::runtime_error("GDAL failed to read JP2/TIFF pixels: " + path.string());
+            }
+            const bool byte_data = band->GetRasterDataType() == GDT_Byte;
+            for (std::size_t pixel = 0; pixel < values.size(); ++pixel) {
+                const double scaled = byte_data ? values[pixel] : values[pixel] * (255.0 / 10000.0);
+                image.pixels[pixel * 3 + static_cast<std::size_t>(output_channel)] =
+                    static_cast<std::uint8_t>(std::clamp(scaled, 0.0, 255.0));
+            }
+        }
+        GDALClose(dataset);
+        return image;
+    } catch (...) {
+        GDALClose(dataset);
+        throw;
+    }
+#else
+    throw std::runtime_error("cannot decode JP2/TIFF image " + path.string() +
+                             ": rebuild TinyLogicVision with GDAL support");
+#endif
 }
 
 } // namespace

@@ -8,3 +8,5 @@ build/
 *.tlv
 TinyLogicVision-*/
 forest_sentinel.png
+__pycache__/
+*.py[cod]

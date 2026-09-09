@@ -58,6 +58,10 @@ RUNS_LOCK = threading.Lock()
 ACTIVE_RUNS = {}
 JOBS_LOCK = threading.Lock()
 JOBS = {}
+APPROVED_PATHS_LOCK = threading.Lock()
+APPROVED_LOCAL_PATHS = set()
+
+SUPPORTED_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".jp2", ".j2k", ".tif", ".tiff"}
 
 
 def sanitize_name(name: str) -> str:
@@ -262,14 +266,18 @@ def load_image_dimensions_and_rgb(image_path: Path):
     return 0, 0, None
 
 
+def approve_local_path(target_path: Path):
+    with APPROVED_PATHS_LOCK:
+        APPROVED_LOCAL_PATHS.add(target_path.resolve())
+
+
 def is_safe_path(target_path: Path, allowed_roots=None) -> bool:
     try:
         resolved = target_path.resolve()
         if allowed_roots is None:
-            # When bound strictly to local loopback (127.0.0.1), allow local files/directories
-            if resolved.is_file() or resolved.is_dir():
-                return True
-            allowed_roots = [RUNTIME_ROOT, REPO_ROOT, Path.home()]
+            allowed_roots = [RUNTIME_ROOT, REPO_ROOT]
+            with APPROVED_PATHS_LOCK:
+                allowed_roots.extend(APPROVED_LOCAL_PATHS)
         for root in allowed_roots:
             if root.resolve() in resolved.parents or resolved == root.resolve():
                 return True
@@ -449,7 +457,7 @@ class TinyVisionRequestHandler(http.server.BaseHTTPRequestHandler):
                     return
             self.serve_file(p, "application/octet-stream")
         else:
-            self.serve_file(p, "application/octet-stream")
+            self.send_error_json("Unsupported image type", 415)
 
     def handle_api_upload(self):
         content_type = self.headers.get("Content-Type", "")
@@ -888,11 +896,8 @@ class TinyVisionRequestHandler(http.server.BaseHTTPRequestHandler):
             self.send_error_json(f"Invalid JSON: {e}", 400)
             return
 
-        model_name = req.get("model_name", "")
-        if not model_name.endswith(".tlv"):
-            model_path = MODELS_DIR / f"{sanitize_name(model_name)}.tlv"
-        else:
-            model_path = MODELS_DIR / model_name
+        model_name = sanitize_name(Path(str(req.get("model_name", ""))).stem)
+        model_path = MODELS_DIR / f"{model_name}.tlv"
 
         image_path = Path(req.get("image_path", ""))
 
@@ -942,11 +947,8 @@ class TinyVisionRequestHandler(http.server.BaseHTTPRequestHandler):
             self.send_error_json(f"Invalid JSON: {e}", 400)
             return
 
-        model_name = req.get("model_name", "")
-        if not model_name.endswith(".tlv"):
-            model_path = MODELS_DIR / f"{sanitize_name(model_name)}.tlv"
-        else:
-            model_path = MODELS_DIR / model_name
+        model_name = sanitize_name(Path(str(req.get("model_name", ""))).stem)
+        model_path = MODELS_DIR / f"{model_name}.tlv"
 
         dataset_name = sanitize_name(req.get("dataset_name", ""))
         split = req.get("split", "dev").lower()
@@ -1064,11 +1066,8 @@ class TinyVisionRequestHandler(http.server.BaseHTTPRequestHandler):
             self.send_error_json(f"Invalid JSON: {e}", 400)
             return
 
-        model_name = req.get("model_name", "")
-        if not model_name.endswith(".tlv"):
-            model_path = MODELS_DIR / f"{sanitize_name(model_name)}.tlv"
-        else:
-            model_path = MODELS_DIR / model_name
+        model_name = sanitize_name(Path(str(req.get("model_name", ""))).stem)
+        model_path = MODELS_DIR / f"{model_name}.tlv"
 
         image_path = Path(req.get("image_path", ""))
         stride = int(req.get("stride", 1))
@@ -1401,9 +1400,15 @@ class TinyVisionRequestHandler(http.server.BaseHTTPRequestHandler):
             return
 
         if p.is_dir():
+            approve_local_path(p)
             self.open_sentinel_folder(p)
             return
 
+        if p.suffix.lower() not in SUPPORTED_IMAGE_EXTENSIONS:
+            self.send_error_json("Tipo de arquivo não suportado como fonte de imagem.", 415)
+            return
+
+        approve_local_path(p)
         w, h, _ = load_image_dimensions_and_rgb(p)
         sha = compute_file_sha256(p)
         self.send_json({
@@ -1428,6 +1433,11 @@ class TinyVisionRequestHandler(http.server.BaseHTTPRequestHandler):
         p = Path(raw_path).resolve()
         if not p.is_dir():
             p = p.parent
+        with APPROVED_PATHS_LOCK:
+            browse_roots = [RUNTIME_ROOT, REPO_ROOT, Path.home(), *APPROVED_LOCAL_PATHS]
+        if not is_safe_path(p, browse_roots):
+            self.send_error_json("Diretório fora das raízes locais autorizadas.", 403)
+            return
 
         entries = []
         try:
@@ -1466,6 +1476,7 @@ class TinyVisionRequestHandler(http.server.BaseHTTPRequestHandler):
             if not p.is_dir():
                 self.send_error_json(f"Diretório não encontrado: {folder_path}", 404)
                 return
+            approve_local_path(p)
             self.open_sentinel_folder(p)
             return
 
@@ -1479,6 +1490,10 @@ class TinyVisionRequestHandler(http.server.BaseHTTPRequestHandler):
                 if not bp.is_file():
                     self.send_error_json(f"Arquivo da banda {name} não encontrado: {bp}", 404)
                     return
+                if bp.suffix.lower() not in (".jp2", ".j2k", ".tif", ".tiff"):
+                    self.send_error_json(f"Tipo de arquivo inválido para a banda {name}: {bp.suffix}", 415)
+                    return
+                approve_local_path(bp)
 
             self.process_sentinel_band_set(b2_p, b3_p, b4_p, b8_p)
             return

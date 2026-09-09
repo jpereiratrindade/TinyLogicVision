@@ -111,7 +111,13 @@ def main():
             urllib.request.urlopen(f"{base_url}/api/image?path=../../../../etc/passwd", timeout=1)
             raise AssertionError("Path traversal was not blocked!")
         except urllib.error.HTTPError as e:
-            assert e.code in (400, 403, 404), f"Unexpected HTTP status for path traversal: {e.code}"
+            assert e.code in (400, 403, 404, 415), f"Unexpected HTTP status for path traversal: {e.code}"
+
+        try:
+            urllib.request.urlopen(f"{base_url}/api/image?path=/etc/passwd", timeout=1)
+            raise AssertionError("Absolute arbitrary-file read was not blocked!")
+        except urllib.error.HTTPError as e:
+            assert e.code in (400, 403, 404, 415), f"Unexpected HTTP status for absolute path: {e.code}"
 
         # 3. Test Image Upload (PNG and Sentinel JP2)
         print("Testing image upload (PNG and Sentinel JP2)...")

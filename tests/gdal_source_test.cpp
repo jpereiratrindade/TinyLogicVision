@@ -1,6 +1,7 @@
 #include "tinyvision/application.hpp"
 #include "tinyvision/dense.hpp"
 #include "tinyvision/gdal_source.hpp"
+#include "tinyvision/image.hpp"
 #include "tinyvision/schema.hpp"
 
 #include <cmath>
@@ -118,6 +119,18 @@ int main() {
         alignment_rejected = true;
     }
     if (!alignment_rejected) fail("misaligned Sentinel band geotransform was accepted");
+
+    const auto injection_marker = std::filesystem::current_path() / "tinyvision_injected_marker";
+    std::filesystem::remove(injection_marker, cleanup_error);
+    const auto hostile_name = root / "fixture_$(touch tinyvision_injected_marker)_B02_10m.tif";
+    create_band(hostile_name, 1000);
+    const auto hostile_preview = tinyvision::load_rgb_image(hostile_name);
+    if (hostile_preview.width != 16 || hostile_preview.height != 16) {
+        fail("GDAL image decoder failed for a valid TIFF with shell metacharacters in its name");
+    }
+    if (std::filesystem::exists(injection_marker)) {
+        fail("image filename was interpreted by a command shell");
+    }
 
     std::filesystem::remove_all(root, cleanup_error);
     std::cout << "PASS: gdal_source_test (native B2/B3/B4/B8 source, schema gate, alignment gate)\n";
