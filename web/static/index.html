@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>TinyLogicVision — Web GUI v0.1</title>
+  <title>TinyLogicVision — Full Multichannel / GEO / H3 / Provenance Web GUI</title>
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
@@ -13,14 +13,20 @@
       <div class="header-brand">
         <div class="logo-icon">TV</div>
         <div>
-          <h1>TinyLogicVision <span class="badge-version">v0.1 Web GUI</span></h1>
-          <p class="subtitle">Dataset por Patches 8x8 • Treinamento • Avaliação • Classificação</p>
+          <h1>TinyLogicVision <span class="badge-version">v2.0 Full Architecture</span></h1>
+          <p class="subtitle">RGB • Multicanal 10m • Sentinel-2 B2/B3/B4/B8 • GeoTIFF • Grafo RIT • H3 • Jobs Assíncronos</p>
         </div>
       </div>
       <div class="header-status">
-        <span class="status-indicator online"></span>
-        <span class="status-text">127.0.0.1 (Local Seguro)</span>
-        <div class="workspace-pill"><code>.tinyvision/</code></div>
+        <div class="caps-pill">
+          <span class="cap-tag ready">RGB</span>
+          <span class="cap-tag ready">MULTICHANNEL</span>
+          <span class="cap-tag ready">SENTINEL-10M</span>
+          <span class="cap-tag ready">GEO</span>
+          <span class="cap-tag ready">H3</span>
+          <span class="cap-tag ready">RIT</span>
+        </div>
+        <div class="workspace-pill"><code>127.0.0.1 • .tinyvision/</code></div>
       </div>
     </header>
 
@@ -30,58 +36,132 @@
         <span class="tab-num">1</span> Preparar Dataset & Patches
       </button>
       <button class="tab-btn" data-tab="tab-train">
-        <span class="tab-num">2</span> Treinar Modelo
+        <span class="tab-num">2</span> Treinar Modelo (v1/v2)
       </button>
       <button class="tab-btn" data-tab="tab-eval">
-        <span class="tab-num">3</span> Classificar & Avaliar
+        <span class="tab-num">3</span> Mapa Denso & Geo / H3
+      </button>
+      <button class="tab-btn" data-tab="tab-jobs">
+        <span class="tab-num">4</span> Jobs Assíncronos <span id="nav-jobs-badge" class="badge-counter hidden">0</span>
       </button>
       <button class="tab-btn" data-tab="tab-browser">
-        <span class="tab-num">4</span> Workspace Explorer
+        <span class="tab-num">5</span> Proveniência & Explorer
       </button>
     </nav>
 
-    <!-- Tab 1: Dataset Authoring -->
+    <!-- Tab 1: Dataset Authoring & Multichannel Source -->
     <main id="tab-dataset" class="tab-content active">
       <div class="split-layout">
         <!-- Sidebar Controls -->
         <aside class="sidebar">
-          <!-- Step A: Image Load -->
+          <!-- Step A: Source Configuration & Modality -->
           <section class="card control-group">
-            <h3><span class="step-badge">A</span> 1. Abrir Imagem Fonte</h3>
+            <div class="section-header-row">
+              <h3><span class="step-badge">A</span> 1. Fonte & Modalidade</h3>
+            </div>
+
+            <!-- Modality Selector -->
+            <div class="modality-selector-group">
+              <label class="radio-card active" id="modality-rgb-card">
+                <input type="radio" name="input-modality" value="RGB" checked>
+                <div class="radio-card-content">
+                  <span class="radio-title">RGB Imagem (3 Canais)</span>
+                  <span class="radio-desc">PNG/JPEG 8x8x3 (192 entradas)</span>
+                </div>
+              </label>
+
+              <label class="radio-card" id="modality-s2-card">
+                <input type="radio" name="input-modality" value="SENTINEL2_MULTIBAND">
+                <div class="radio-card-content">
+                  <span class="radio-title">Sentinel-2 10m Multibanda</span>
+                  <span class="radio-desc">B2 (Blue), B3 (Green), B4 (Red), B8 (NIR) • 256 entradas</span>
+                </div>
+              </label>
+            </div>
+
+            <!-- Upload Zone -->
             <div class="upload-zone" id="drop-zone">
-              <input type="file" id="image-file-input" accept="image/png,image/jpeg,image/jpg" hidden>
+              <input type="file" id="image-file-input" accept="image/png,image/jpeg,image/jpg,image/tiff,.tif,.tiff" hidden>
               <div class="upload-prompt">
-                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
                   <polyline points="17 8 12 3 7 8"></polyline>
                   <line x1="12" y1="3" x2="12" y2="15"></line>
                 </svg>
-                <span>Clique para selecionar PNG/JPEG</span>
-                <small>ou arraste a imagem aqui</small>
+                <span id="upload-prompt-text">Carregar Imagem ou Cena Sentinel-2</span>
+                <small>PNG, JPEG, GeoTIFF ou produto multicanal</small>
               </div>
             </div>
 
-            <!-- Image Metadata & Sentinel Resolution -->
+            <!-- Source Details & Schema Metadata -->
             <div id="image-meta" class="meta-box hidden">
               <div class="meta-row">
                 <span class="meta-label">Arquivo:</span>
                 <span id="meta-filename" class="meta-val">-</span>
               </div>
               <div class="meta-row">
-                <span class="meta-label">Dimensões:</span>
+                <span class="meta-label">Dimensões / Grade:</span>
                 <span id="meta-dims" class="meta-val">-</span>
               </div>
               <div class="meta-row">
-                <span class="meta-label">SHA-256:</span>
+                <span class="meta-label">Modalidade do Schema:</span>
+                <span id="meta-schema-modality" class="badge badge-cyan">RGB (8x8x3)</span>
+              </div>
+              <div class="meta-row">
+                <span class="meta-label">SHA-256 da Fonte:</span>
                 <span id="meta-sha" class="meta-val mono-small">-</span>
               </div>
 
-              <!-- Sentinel 10m Nominal Scale Toggle -->
+              <!-- Multichannel Bands Specification Table -->
+              <div id="bands-schema-box" class="bands-schema-box hidden">
+                <div class="bands-box-header">
+                  <span>Esquema de Bandas Canônico (InputSchema)</span>
+                  <span class="badge badge-emerald">Ordem Estrita</span>
+                </div>
+                <div class="bands-table-wrapper">
+                  <table class="bands-spec-table">
+                    <thead>
+                      <tr>
+                        <th>#</th>
+                        <th>Banda</th>
+                        <th>Nome</th>
+                        <th>Comprimento</th>
+                        <th>Normalização</th>
+                      </tr>
+                    </thead>
+                    <tbody id="bands-spec-body">
+                      <tr><td>0</td><td><strong>B2</strong></td><td>Azul (Blue)</td><td>490 nm</td><td><code>linear (scale 0.0001)</code></td></tr>
+                      <tr><td>1</td><td><strong>B3</strong></td><td>Verde (Green)</td><td>560 nm</td><td><code>linear (scale 0.0001)</code></td></tr>
+                      <tr><td>2</td><td><strong>B4</strong></td><td>Vermelho (Red)</td><td>665 nm</td><td><code>linear (scale 0.0001)</code></td></tr>
+                      <tr><td>3</td><td><strong>B8</strong></td><td>Infravermelho Próximo (NIR)</td><td>842 nm</td><td><code>linear (scale 0.0001)</code></td></tr>
+                    </tbody>
+                  </table>
+                </div>
+                <small class="text-dim">Preview visual RGB utiliza composição B4/B3/B2 sem afetar as 4 bandas alimentadas ao modelo.</small>
+              </div>
+
+              <!-- Geospatial Metadata Card -->
+              <div id="geo-meta-card" class="geo-meta-card hidden">
+                <div class="geo-card-header">
+                  <span>🌐 Metadados Geoespaciais Detectados</span>
+                  <span class="badge badge-cyan">Georreferenciado</span>
+                </div>
+                <div class="meta-row">
+                  <span class="meta-label">CRS:</span>
+                  <span id="meta-geo-crs" class="meta-val mono-small">EPSG:32722 (WGS 84 / UTM 22S)</span>
+                </div>
+                <div class="meta-row">
+                  <span class="meta-label">Pixel Size:</span>
+                  <span id="meta-geo-pixel" class="meta-val">10.00 m × 10.00 m</span>
+                </div>
+              </div>
+
+              <!-- Sentinel 10m Declaration Toggle -->
               <div class="sentinel-box">
                 <label class="toggle-container">
                   <input type="checkbox" id="chk-sentinel-10m">
                   <span class="toggle-slider"></span>
-                  <span class="toggle-text">Resolução nominal declarada: 10 m/pixel (Sentinel-2)</span>
+                  <span class="toggle-text">Resolução nominal declarada: 10 m/pixel (80x80m por patch)</span>
                 </label>
                 <div id="sentinel-badge" class="resolution-badge display-only">
                   ESPAÇO DE PIXEL — SEM ESCALA MÉTRICA DECLARADA
@@ -94,7 +174,7 @@
           <section class="card control-group">
             <div class="section-header-row">
               <h3><span class="step-badge">B</span> 2. Definir Classes</h3>
-              <button id="btn-preset-sentinel" class="btn btn-xs btn-outline" title="Carregar Floresta, Campo, Solo, Água">Preset Sentinel</button>
+              <button id="btn-preset-sentinel" class="btn btn-xs btn-outline" title="Carregar Floresta, Campo, Solo, Água">Preset Cerrado/Sentinel</button>
             </div>
             
             <div class="class-input-row">
@@ -108,14 +188,14 @@
             </div>
           </section>
 
-          <!-- Step C: ROI Active Settings -->
+          <!-- Step C: ROI Active Settings & Spatial Partitioning -->
           <section class="card control-group">
             <h3><span class="step-badge">C</span> 3. Regiões de Interesse (ROI)</h3>
-            <p class="help-text">Selecione a classe e o split, depois clique e arraste no canvas para criar ROIs.</p>
+            <p class="help-text">Selecione a classe e o split, depois desenhe no canvas para amostrar patches.</p>
             
             <div class="form-row">
               <div class="form-col">
-                <label>Classe para nova ROI:</label>
+                <label>Classe ativa:</label>
                 <select id="select-active-class" class="input-select"></select>
               </div>
               <div class="form-col">
@@ -128,6 +208,27 @@
               </div>
             </div>
 
+            <!-- H3 Spatial Split Partitioning Toggle -->
+            <div class="h3-split-card">
+              <label class="toggle-container">
+                <input type="checkbox" id="chk-h3-split-partition">
+                <span class="toggle-slider"></span>
+                <span class="toggle-text">Particionamento Espacial H3 (1 Célula = 1 Split)</span>
+              </label>
+              <div id="h3-split-controls" class="h3-split-controls hidden">
+                <div class="form-row" style="margin-top: 6px;">
+                  <label>Resolução H3:</label>
+                  <select id="select-h3-resolution" class="input-select input-sm">
+                    <option value="7">Res 7 (~1.2 km diâmetro)</option>
+                    <option value="8" selected>Res 8 (~460 m diâmetro)</option>
+                    <option value="9">Res 9 (~170 m diâmetro)</option>
+                    <option value="10">Res 10 (~65 m diâmetro)</option>
+                  </select>
+                </div>
+                <small class="text-dim">Previne spatial leakage garantindo que TRAIN/DEV/PROBE não compartilhem células hexadecimais H3.</small>
+              </div>
+            </div>
+
             <div class="roi-tools-row">
               <button id="btn-clear-rois" class="btn btn-sm btn-danger-outline">Limpar Todas ROIs</button>
               <span id="roi-count" class="badge">0 ROIs</span>
@@ -136,10 +237,10 @@
 
           <!-- Step D: Generate Patches -->
           <section class="card control-group">
-            <h3><span class="step-badge">D</span> 4. Gerar Patches 8x8</h3>
+            <h3><span class="step-badge">D</span> 4. Gerar Dataset & Patches</h3>
             <div class="form-row">
-              <label>Nome do Dataset:</label>
-              <input type="text" id="dataset-name-input" placeholder="ex: sentinel_cerrado_v1" class="input-text">
+              <label>Identificador do Dataset:</label>
+              <input type="text" id="dataset-name-input" placeholder="ex: sentinel_cerrado_10m_v1" class="input-text">
             </div>
 
             <!-- Summary Table -->
@@ -167,7 +268,7 @@
             <div id="dataset-warnings" class="warnings-box hidden"></div>
 
             <button id="btn-generate-dataset" class="btn btn-success btn-block" disabled>
-              ⚡ Extrair Patches 8x8 & Gerar Dataset
+              ⚡ Extrair Patches & Gerar Dataset (v2)
             </button>
           </section>
         </aside>
@@ -184,11 +285,15 @@
             <div class="tool-group">
               <label class="checkbox-inline">
                 <input type="checkbox" id="chk-show-grid" checked>
-                <span>Grade 8x8 dos Patches</span>
+                <span>Grade dos Patches</span>
               </label>
               <label class="checkbox-inline">
                 <input type="checkbox" id="chk-show-rois" checked>
                 <span>Exibir ROIs</span>
+              </label>
+              <label class="checkbox-inline" id="label-show-h3">
+                <input type="checkbox" id="chk-show-h3-overlay">
+                <span>Grade Hexagonal H3</span>
               </label>
             </div>
           </div>
@@ -197,12 +302,13 @@
             <canvas id="main-canvas"></canvas>
             <div id="canvas-placeholder" class="canvas-empty-state">
               <div class="empty-icon">🗺️</div>
-              <p>Abra uma imagem PNG/JPEG na barra lateral para começar.</p>
+              <p>Abra uma imagem RGB ou cena Sentinel-2 na barra lateral para iniciar.</p>
             </div>
           </div>
 
           <div class="canvas-footer-info">
-            <span id="cursor-coords">X: - | Y: -</span>
+            <span id="cursor-coords">Pixel X: - | Y: -</span>
+            <span id="cursor-geo-coords" class="text-cyan">Geo: -</span>
             <span id="canvas-patch-info">Patches selecionados: 0</span>
           </div>
         </div>
@@ -214,8 +320,8 @@
       <div class="split-layout">
         <aside class="sidebar">
           <section class="card control-group">
-            <h3>Treinamento de Modelo</h3>
-            <p class="help-text">Executa o treinamento canônico C++ via <code>./bin/tinyvision train</code>.</p>
+            <h3>Treinamento de Modelo (C++ Authority)</h3>
+            <p class="help-text">Executa o treinamento canônico com suporte a modelos RGB (192 entradas) e Multicanal Sentinel-2 (256 entradas).</p>
             
             <div class="form-row">
               <label>Dataset:</label>
@@ -224,24 +330,35 @@
 
             <div class="form-row">
               <label>Nome do Modelo (.tlv):</label>
-              <input type="text" id="train-model-name" placeholder="ex: modelo_cerrado_v1" class="input-text">
+              <input type="text" id="train-model-name" placeholder="ex: modelo_sentinel_10m_v1" class="input-text">
+            </div>
+
+            <div class="form-row">
+              <label class="checkbox-inline">
+                <input type="checkbox" id="chk-train-async" checked>
+                <span>Executar em Segundo Plano (Job Assíncrono)</span>
+              </label>
             </div>
 
             <button id="btn-start-train" class="btn btn-primary btn-block">
-              ▶ TREINAR MODELO
+              ▶ INICIAR TREINAMENTO
             </button>
           </section>
 
           <!-- Training Summary Card -->
           <section class="card control-group">
-            <h3>Parâmetros TV-APP-00</h3>
+            <h3>Arquitetura & Parâmetros</h3>
             <div class="meta-box">
               <div class="meta-row">
-                <span class="meta-label">Entrada:</span>
-                <span class="meta-val">192 (8x8x3 RGB)</span>
+                <span class="meta-label">Entrada RGB:</span>
+                <span class="meta-val">192 (8×8×3 RGB)</span>
               </div>
               <div class="meta-row">
-                <span class="meta-label">Oculta:</span>
+                <span class="meta-label">Entrada Sentinel-2:</span>
+                <span class="meta-val text-cyan">256 (8×8×4 B2,B3,B4,B8)</span>
+              </div>
+              <div class="meta-row">
+                <span class="meta-label">Camada Oculta:</span>
                 <span class="meta-val">24 unidades tanh</span>
               </div>
               <div class="meta-row">
@@ -249,8 +366,8 @@
                 <span class="meta-val">SGD por amostra (lr=0.025)</span>
               </div>
               <div class="meta-row">
-                <span class="meta-label">Épocas:</span>
-                <span class="meta-val">180</span>
+                <span class="meta-label">Workspaces:</span>
+                <span class="meta-val text-emerald">Zero alocações heap (TV-PERF-00)</span>
               </div>
             </div>
           </section>
@@ -283,24 +400,24 @@
 
           <div class="terminal-log-container">
             <div class="terminal-header">Saída do Processo (./bin/tinyvision train)</div>
-            <pre id="train-terminal-log" class="terminal-body">// Os logs de treinamento aparecerão aqui...</pre>
+            <pre id="train-terminal-log" class="terminal-body">// Os logs de treinamento em C++ aparecerão aqui...</pre>
           </div>
         </div>
       </div>
     </main>
 
-    <!-- Tab 3: Classify & Evaluate -->
+    <!-- Tab 3: Classify, Evaluate & Dense Georeferenced Map -->
     <main id="tab-eval" class="tab-content">
       <!-- Dense Classification Hero Section -->
       <section class="card dense-map-container">
         <div class="panel-header">
           <div>
-            <h3>🗺️ Classificar Imagem em Grade (Mapa Espacial Denso)</h3>
+            <h3>🗺️ Classificação Espacial Densa & Saídas Georreferenciadas (GEO / H3)</h3>
             <p class="help-text">
-              Responde <em>"onde o modelo vê cada classe na imagem?"</em> com janela deslizante 8x8 e suporte nominal 80x80m (Sentinel).
+              Motor de streaming em C++ com suporte a multithreading, saída GeoTIFF 6.0, indexação $O(1)$ e agregação H3.
             </p>
           </div>
-          <span class="badge-version">C++ Map Engine</span>
+          <span class="badge-version">Tiled Streaming Engine</span>
         </div>
 
         <div class="dense-controls-grid">
@@ -309,10 +426,10 @@
             <select id="dense-select-model" class="input-select"></select>
           </div>
           <div class="form-col">
-            <label>Imagem Fonte:</label>
+            <label>Imagem / Cena Fonte:</label>
             <div class="flex-row-gap">
               <select id="dense-select-image" class="input-select"></select>
-              <input type="file" id="dense-file-input" accept="image/png,image/jpeg" hidden>
+              <input type="file" id="dense-file-input" accept="image/png,image/jpeg,image/tiff,.tif,.tiff" hidden>
               <button id="btn-dense-upload" class="btn btn-sm btn-outline">📂 Carregar</button>
             </div>
           </div>
@@ -322,7 +439,18 @@
               <option value="1" selected>Stride 1 (Decisão a cada pixel / 10 m)</option>
               <option value="2">Stride 2 (Decisão a cada 2 px / 20 m)</option>
               <option value="4">Stride 4 (Decisão a cada 4 px / 40 m)</option>
-              <option value="8">Stride 8 (Decisão a cada 8 px / 80 m - blocos)</option>
+              <option value="8">Stride 8 (Decisão a cada 8 px / 80 m)</option>
+            </select>
+          </div>
+          <div class="form-col">
+            <label>Threads Paralelas:</label>
+            <select id="dense-select-threads" class="input-select">
+              <option value="0" selected>Auto (Hardware Concurrency)</option>
+              <option value="1">1 Thread (Determinístico estrito)</option>
+              <option value="2">2 Threads</option>
+              <option value="4">4 Threads</option>
+              <option value="8">8 Threads</option>
+              <option value="16">16 Threads</option>
             </select>
           </div>
         </div>
@@ -360,11 +488,11 @@
 
         <div class="action-bar-row">
           <button id="btn-run-dense-map" class="btn btn-primary btn-lg">
-            ⚡ EXECUTAR CLASSIFICAÇÃO EM GRADE
+            ⚡ EXECUTAR CLASSIFICAÇÃO DENSA EM GRADE
           </button>
           <div id="dense-progress" class="progress-box hidden">
             <div class="spinner"></div>
-            <span id="dense-progress-text">Processando janelas deslizantes em C++...</span>
+            <span id="dense-progress-text">Processando streaming de janelas em C++...</span>
           </div>
         </div>
 
@@ -372,14 +500,15 @@
         <div id="dense-results-panel" class="dense-results-box hidden">
           <div class="dense-viewer-header">
             <div class="dense-view-modes">
-              <button class="btn btn-sm btn-mode active" data-mode="overlay">Overlay (Canônico C++)</button>
+              <button class="btn btn-sm btn-mode active" data-mode="overlay">Overlay Canônico (W×H)</button>
               <button class="btn btn-sm btn-mode" data-mode="class_map">Mapa de Classes (Grid)</button>
               <button class="btn btn-sm btn-mode" data-mode="confidence">Probabilidade Top-1 (Grid)</button>
               <button class="btn btn-sm btn-mode" data-mode="margin">Margem Top-1 − Top-2 (Grid)</button>
+              <button class="btn btn-sm btn-mode" data-mode="h3_aggr">Agregação H3 (Hexágonos)</button>
               <button class="btn btn-sm btn-mode" data-mode="source">Imagem Original</button>
             </div>
             <div class="dense-viewer-note text-dim">
-              <small>Modos Grid exibem decisões no espaço discreto da grade ($N_x \times N_y$)</small>
+              <small>Índice Binário $O(1)$ ativo: clique em qualquer posição para inspecionar instantaneamente.</small>
             </div>
           </div>
 
@@ -394,10 +523,10 @@
             <div class="dense-side-panel">
               <!-- Spatial Inspector Card -->
               <div class="inspector-card">
-                <h4>🎯 Inspeção Espacial da Decisão</h4>
+                <h4>🎯 Inspeção Espacial & Georreferenciada (O(1))</h4>
                 <div class="inspector-field-group">
                   <div class="insp-row">
-                    <span class="insp-lbl">Posição na Grade (gx, gy):</span>
+                    <span class="insp-lbl">Grade (gx, gy):</span>
                     <strong id="insp-grid" class="mono text-cyan">-</strong>
                   </div>
                   <div class="insp-row">
@@ -409,8 +538,16 @@
                     <strong id="insp-center" class="mono text-cyan">-</strong>
                   </div>
                   <div class="insp-row">
-                    <span class="insp-lbl">Âncora Visual (Display):</span>
-                    <strong id="insp-display" class="mono">-</strong>
+                    <span class="insp-lbl">Coordenadas de Mapa:</span>
+                    <strong id="insp-map-coords" class="mono text-amber">X: - | Y: -</strong>
+                  </div>
+                  <div class="insp-row">
+                    <span class="insp-lbl">Geográficas (WGS84):</span>
+                    <strong id="insp-latlon" class="mono text-emerald">Lat: - | Lon: -</strong>
+                  </div>
+                  <div class="insp-row">
+                    <span class="insp-lbl">Índice H3:</span>
+                    <span id="insp-h3-index" class="mono-small text-cyan">-</span>
                   </div>
                   <div class="insp-row">
                     <span class="insp-lbl">Suporte Contextual:</span>
@@ -460,7 +597,7 @@
 
               <!-- Export Links -->
               <div class="export-links-card">
-                <h4>📁 Download de Artefatos Canônicos</h4>
+                <h4>📁 Download de Artefatos (Rasters, GeoTIFF, H3 & RIT)</h4>
                 <div class="export-links-list">
                   <a id="link-download-csv" href="#" download="classification.csv" target="_blank" class="btn btn-xs btn-outline">📥 classification.csv</a>
                   <a id="link-download-json" href="#" download="run.json" target="_blank" class="btn btn-xs btn-outline">📋 run.json</a>
@@ -468,6 +605,10 @@
                   <a id="link-download-classmap" href="#" download="class_map.png" target="_blank" class="btn btn-xs btn-outline">🗺️ class_map.png</a>
                   <a id="link-download-confidencemap" href="#" download="confidence.png" target="_blank" class="btn btn-xs btn-outline">📊 confidence.png (Top-1)</a>
                   <a id="link-download-marginmap" href="#" download="margin.png" target="_blank" class="btn btn-xs btn-outline">📈 margin.png (Margem)</a>
+                  <a id="link-download-geotiff-class" href="#" download="class_map.tif" target="_blank" class="btn btn-xs btn-outline btn-geo">🌍 class_map.tif (GeoTIFF)</a>
+                  <a id="link-download-geotiff-conf" href="#" download="confidence.tif" target="_blank" class="btn btn-xs btn-outline btn-geo">🌍 confidence.tif (GeoTIFF)</a>
+                  <a id="link-download-h3-csv" href="#" download="classification_h3.csv" target="_blank" class="btn btn-xs btn-outline btn-h3">🔷 classification_h3.csv</a>
+                  <a id="link-download-provenance" href="#" download="provenance.json" target="_blank" class="btn btn-xs btn-outline btn-rit">🧬 provenance.json (RIT)</a>
                 </div>
               </div>
             </div>
@@ -479,8 +620,8 @@
       <div class="split-layout" style="margin-top: 16px;">
         <!-- Classification Section -->
         <div class="card panel-section">
-          <h3>Classificar Imagem Individual (8x8)</h3>
-          <p class="help-text">Executa <code>./bin/tinyvision classify MODEL IMAGE</code>.</p>
+          <h3>Classificar Amostra Individual</h3>
+          <p class="help-text">Executa <code>./bin/tinyvision classify MODEL IMAGE/PATCH</code>.</p>
           
           <div class="form-row">
             <label>Modelo:</label>
@@ -488,8 +629,8 @@
           </div>
 
           <div class="form-row">
-            <label>Imagem para Classificação:</label>
-            <input type="file" id="classify-image-file" accept="image/png,image/jpeg" class="input-file">
+            <label>Amostra para Classificação:</label>
+            <input type="file" id="classify-image-file" accept="image/png,image/jpeg,.tvp" class="input-file">
           </div>
 
           <button id="btn-run-classify" class="btn btn-primary">🔍 Classificar</button>
@@ -562,16 +703,88 @@
       </div>
     </main>
 
-    <!-- Tab 4: Workspace Explorer -->
+    <!-- Tab 4: Asynchronous Jobs Monitor -->
+    <main id="tab-jobs" class="tab-content">
+      <div class="split-layout">
+        <aside class="sidebar">
+          <section class="card control-group">
+            <h3>Execução Assíncrona Local</h3>
+            <p class="help-text">Treinamentos e mapas densos em segundo plano gerenciados pelo backend estrito em <code>127.0.0.1</code>.</p>
+            <button id="btn-refresh-jobs" class="btn btn-sm btn-outline btn-block">🔄 Atualizar Lista de Jobs</button>
+          </section>
+
+          <section class="card control-group">
+            <h3>Novo Job Rápido</h3>
+            <div class="form-row">
+              <label>Tipo de Job:</label>
+              <select id="quick-job-type" class="input-select">
+                <option value="train">Treinamento (Train)</option>
+                <option value="dense_map">Mapa Denso (Dense Map)</option>
+              </select>
+            </div>
+            <div id="quick-job-params"></div>
+            <button id="btn-submit-quick-job" class="btn btn-primary btn-block">▶ Submeter Job</button>
+          </section>
+        </aside>
+
+        <div class="card panel-section">
+          <div class="panel-header">
+            <h3>Fila e Histórico de Jobs Assíncronos</h3>
+            <span id="jobs-count-badge" class="badge">0 jobs</span>
+          </div>
+
+          <div id="jobs-list-container" class="jobs-list-container">
+            <div class="empty-msg">Nenhum job em execução no momento.</div>
+          </div>
+
+          <div id="job-active-detail" class="job-active-detail hidden" style="margin-top: 16px;">
+            <div class="panel-header">
+              <h4>Log em Tempo Real do Job: <span id="active-job-id" class="mono text-cyan">-</span></h4>
+              <span id="active-job-status" class="badge">RUNNING</span>
+            </div>
+            <pre id="active-job-log" class="terminal-body" style="max-height: 280px;">// Logs da autoridade C++...</pre>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <!-- Tab 5: Workspace Explorer & RIT Provenance -->
     <main id="tab-browser" class="tab-content">
       <div class="workspace-grid">
         <div class="card">
-          <h3>Datasets em <code>.tinyvision/datasets/</code></h3>
+          <div class="section-header-row">
+            <h3>Datasets em <code>.tinyvision/datasets/</code></h3>
+            <span class="badge" id="browser-datasets-count">0</span>
+          </div>
           <div id="browser-datasets-list" class="items-list"></div>
         </div>
         <div class="card">
-          <h3>Modelos em <code>.tinyvision/models/</code></h3>
+          <div class="section-header-row">
+            <h3>Modelos em <code>.tinyvision/models/</code></h3>
+            <span class="badge" id="browser-models-count">0</span>
+          </div>
           <div id="browser-models-list" class="items-list"></div>
+        </div>
+        <div class="card full-width-card">
+          <div class="section-header-row">
+            <h3>Grafo de Linhagem e Proveniência RIT (Temporal Evidence)</h3>
+            <span class="badge badge-emerald">TV-EVIDENCE-00</span>
+          </div>
+          <p class="help-text">Rastreabilidade formal de experimentos: Fonte ➔ ROIs ➔ Patches ➔ Datasets ➔ Treinamento ➔ Modelos ➔ Mapas Densos ➔ Artefatos.</p>
+          <div id="rit-graph-explorer" class="rit-graph-container">
+            <div class="rit-legend">
+              <span class="rit-tag tag-source">Source</span>
+              <span class="rit-tag tag-roi">ROI</span>
+              <span class="rit-tag tag-patch">Patch</span>
+              <span class="rit-tag tag-dataset">Dataset</span>
+              <span class="rit-tag tag-model">Model</span>
+              <span class="rit-tag tag-run">Run</span>
+              <span class="rit-tag tag-artifact">Artifact</span>
+            </div>
+            <div id="rit-nodes-list" class="rit-nodes-flow">
+              <!-- Rendered RIT Provenance Nodes -->
+            </div>
+          </div>
         </div>
       </div>
     </main>

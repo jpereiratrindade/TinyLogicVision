@@ -29,71 +29,82 @@ can now train and apply the same tiny MLP to labeled PNG/JPEG patches.
 
 ## Quick start
 
-### 1. Local Web Application (Recommended)
+### 1. Aplicação Web Local (Web GUI v2.0)
 
-Launch the self-contained local web interface at `127.0.0.1`:
+Inicie a interface web local auto-contida em `127.0.0.1`:
 
 ```bash
 ./bin/tinyvision web
 ```
 
-The interactive workflow guides you through:
-1. **Abrir Imagem**: Carregue PNG/JPEG local (com indicação se a fonte possui pixels Sentinel-2 nominais de 10 m ou imagem de exibição);
-2. **Definir Classes**: Crie classes rotuladas com paleta unificada e canônica;
-3. **Marcar Regiões (ROIs)**: Desenhe áreas de interesse no canvas e atribua splits (`TRAIN`, `DEV`, `PROBE`) respeitando a integridade de splits por ROI (**1 ROI = 1 Split** e disjunção espacial entre splits validada no backend);
-4. **Gerar Patches 8x8**: Extraia patches exatos de 8x8 pixels sem interpolação com manifesto de proveniência (`manifest.csv` e `dataset.json`);
-5. **Treinar**: Execute o treinamento canônico C++ (`./bin/tinyvision train`) com métricas em tempo real;
-6. **Classificar Imagem em Grade (Mapa Denso)**: Execute a classificação espacial densa em C++ (`./bin/tinyvision map`) com visualização de classes no espaço da grade, probabilidade top-1, margem top-1 − top-2, overlay canônico C++ e inspeção espacial interativa;
-7. **Classificar & Avaliar**: Classifique novas imagens 8x8 e avalie splits mantendo o `PROBE` isolado.
+O fluxo de trabalho interativo unificado oferece:
+1. **Modalidade & Fonte**: Escolha entre **RGB (192 entradas)** ou **Sentinel-2 10m Multibanda (B2, B3, B4, B8 — 256 entradas)** com metadados geoespaciais (CRS, pixel size, geotransform);
+2. **Definição de Classes**: Crie classes rotuladas com paleta unificada e canônica (ou preset Cerrado/Sentinel);
+3. **Regiões de Interesse (ROIs) & Particionamento H3**: Desenhe ROIs no canvas com validação de **1 ROI = 1 Split** e opção de **Particionamento Espacial H3** (1 célula H3 = 1 split) para prevenir spatial leakage;
+4. **Extração de Patches & Proveniência**: Extraia patches exatos de $8 \times 8$ (ou tensores nativos `.tvp`) com manifesto e grafo de proveniência RIT (`manifest.csv`, `dataset.json`, `provenance.json`);
+5. **Treinamento Síncrono ou Assíncrono**: Treine modelos v1/v2 em C++ (`./bin/tinyvision train`) em segundo plano com monitoramento em tempo real via aba de Jobs;
+6. **Classificação Densa, GeoTIFF & Agregação H3**: Execute o motor de streaming C++ (`./bin/tinyvision map`) com multithreading (`--threads N`), inspeção $O(1)$ por seek binário, download de GeoTIFFs (`class_map.tif`, `confidence.tif`, `margin.tif`) e agregação espacial H3 (`classification_h3.csv`);
+7. **Classificar & Avaliar**: Classifique amostras individuais e avalie splits mantendo o `PROBE` isolado.
 
 ### 2. Linha de Comando (CLI)
 
-Build the release binaries, train, classify, evaluate, and generate dense classification maps via the canonical `./bin/tinyvision` CLI:
+Treine, classifique, avalie, execute benchmarks e gere mapas densos georreferenciados via `./bin/tinyvision`:
 
 ```bash
-# 1. Build
+# 1. Build em modo Release
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build
 
-# 2. Train on a dataset (trains on train/, observes dev/)
+# 2. Treinar modelo em dataset (RGB ou Multicanal Sentinel-2)
 ./bin/tinyvision train ./dataset ./model.tlv
 
-# 3. Dense spatial classification map (answers "where does the model see each class?")
+# 3. Classificação espacial densa em grade (respostas: "onde o modelo vê cada classe?")
 ./bin/tinyvision map \
     model.tlv \
-    sentinel.png \
+    sentinel_scene.png \
     .tinyvision/runs/map01 \
-    --stride 1 \
+    --stride 2 \
+    --threads 8 \
+    --confidence 0.50 \
+    --margin 0.10 \
     --sentinel-10m
 
-# 4. Classify a single PNG/JPEG 8x8 patch
-./bin/tinyvision classify ./model.tlv ./example.jpg
+# 4. Benchmark de engenharia CPU / memória (zero alocações de heap no hot loop)
+./bin/tinyvision benchmark
 
-# 5. Evaluate on a labeled split
+# 5. Classificar amostra individual (PNG, JPEG ou patch .tvp)
+./bin/tinyvision classify ./model.tlv ./example.png
+
+# 6. Avaliar split rotulado
 ./bin/tinyvision evaluate ./model.tlv ./dataset/dev
 
-# 6. Verify the entire project suite
+# 7. Executar suite de verificação canônica
 ./bin/tinyvision verify
 ```
 
-### 3. Conceito da Classificação Espacial Densa
+### 3. Conceito da Classificação Espacial Densa & GeoTIFF
 
-- **Suporte Contextual (Support Window)**: $8 \times 8$ pixels ($192$ entradas RGB scanline $[x, x+7] \times [y, y+7]$ extraídas diretamente sem interpolação como `EXACT_RGB_INPUT_VECTOR`).
-- **Resolução Nominal Declarada**: $80 \times 80\text{ m}$ nominais quando declarada pelo operador como escala nominal Sentinel-2 ($10\text{ m/px}$). O sistema não valida metadata de satélite independente.
-- **Espaçamento (Stride)**: Espaçamento entre decisões consecutivas na grade discreta (não altera o tamanho do suporte $8 \times 8$).
-  - Stride 1: decisão a cada pixel usando suporte de $8 \times 8$.
-  - Stride 2: decisão a cada 2 pixels.
-  - Stride 4: decisão a cada 4 pixels.
-  - Stride 8: decisão a cada 8 pixels (suportes disjuntos).
-- **Semântica Espacial**:
+- **Suporte Contextual (Support Window)**: $8 \times 8$ pixels ($192$ entradas RGB ou $256$ entradas Sentinel-2 $8 \times 8 \times 4$ $[B2, B3, B4, B8]$ scanline extraídas diretamente sem interpolação).
+- **Resolução Nominal Declarada**: $80 \times 80\text{ m}$ nominais quando declarada como escala nominal Sentinel-2 ($10\text{ m/px}$).
+- **Espaçamento (Stride)**: Espaçamento entre decisões consecutivas na grade discreta (não altera o suporte $8 \times 8$):
+  - Stride 1: decisão a cada pixel ($10\text{ m}$ nominais).
+  - Stride 2: decisão a cada 2 pixels ($20\text{ m}$).
+  - Stride 4: decisão a cada 4 pixels ($40\text{ m}$).
+  - Stride 8: decisão a cada 8 pixels ($80\text{ m}$ — blocos disjuntos).
+- **Semântica Espacial & Coordenadas**:
   - `origin_x, origin_y`: Origem da janela na imagem fonte.
   - `center_x, center_y`: Centro geométrico exato $(x + 3.5, y + 3.5)$.
   - `grid_x, grid_y`: Coordenadas na grade discreta de decisões ($N_x \times N_y$).
   - `display_x, display_y`: Âncora visual inteira de exibição $(x + 4, y + 4)$.
-  - *Regra fundamental*: $\text{SUPPORT} \neq \text{DECISION POINT} \neq \text{DISPLAY CELL}$.
+  - `map_x, map_y`: Coordenadas no CRS projetado da fonte (quando georreferenciada).
+  - `h3_index`: Índice da célula hexadecimal H3 correspondente ao centro do patch.
+  - *Regra fundamental*: $\text{SUPPORT} \neq \text{DECISION POINT} \neq \text{DISPLAY CELL} \neq \text{H3 CELL}$.
 - **Geometria dos Artefatos**:
-  - `class_map.png`, `confidence.png` (Probabilidade Top-1) e `margin.png` (Margem Top-1 − Top-2) são rasters no **GRID SPACE** ($N_x \times N_y$), onde cada pixel é uma decisão.
-  - `overlay.png` é gerado pelo engine C++ como **autoridade única canônica** no espaço da imagem fonte ($W \times H$), projetando cada decisão em sua célula $\text{stride} \times \text{stride}$ centrada na âncora de exibição: $[\text{display\_x} - \lfloor\text{stride}/2\rfloor, \text{display\_y} - \lfloor\text{stride}/2\rfloor]$ com clipping determinístico nas bordas.
+  - `class_map.png`, `confidence.png` (Probabilidade Top-1) e `margin.png` (Margem Top-1 − Top-2) são rasters no **GRID SPACE** ($N_x \times N_y$).
+  - `class_map.tif`, `confidence.tif` e `margin.tif` são rasters georreferenciados em formato GeoTIFF 6.0 com CRS e geotransform intactos.
+  - `overlay.png` é gerado pelo engine C++ como **autoridade única canônica** no espaço da imagem fonte ($W \times H$).
+  - `classification_h3.csv` consolida estatísticas agregadas por célula H3 (classe dominante, proporção de classes e incerteza).
+  - `decisions.bin` fornece índice binário compacto ($36\text{ bytes/registro}$) para inspeção espacial com tempo de acesso $O(1)$.
 - **Interpretação e Papel dos Limiares de Decisão**:
 
   Na inferência de cada janela $8 \times 8$, a camada softmax produz probabilidades uncalibradas para as $N$ classes:
@@ -112,31 +123,23 @@ cmake --build build
   ```
 
   - **Limiar de Probabilidade Top-1 (`confidence_threshold`)**:
-    *Pergunta que responde*: "A classe vencedora tem força suficiente?"
-    *Função*: Rejeita janelas onde o modelo não tem ativação expressiva para nenhuma classe conhecida (ex: ruído, nuvens ou padrões fora do domínio de treino).
-    *Exemplo*: Em 3 classes, se as saídas forem $[0.36, 0.33, 0.31]$, a vencedora tem apenas $36\%$. Com limiar de $0.50$, a decisão é descartada e marcada como `UNCERTAIN`.
-
+    *Pergunta*: "A classe vencedora tem força suficiente?"
+    *Função*: Rejeita janelas onde o modelo não tem ativação expressiva para nenhuma classe conhecida.
   - **Limiar de Margem Top-1 − Top-2 (`margin_threshold`)**:
-    *Pergunta que responde*: "O modelo está indeciso entre duas classes concorrentes?"
-    *Função*: Rejeita **ambiguidades competitivas** em zonas de transição ecológica (ex: borda floresta/campo ou transição solo/vegetação rala).
-    *Exemplo*: Se $p_1 = 0.51$ (floresta) e $p_2 = 0.49$ (campo), $p_1$ passa no limiar de probabilidade $0.50$, mas a margem é de apenas $0.02$ ($2\%$). Com limiar de margem de $0.10$ ($10\%$), a ambiguidade é detectada e a decisão é marcada como `UNCERTAIN`.
-
+    *Pergunta*: "O modelo está indeciso entre duas classes concorrentes?"
+    *Função*: Rejeita **ambiguidades competitivas** em zonas de transição ecológica (ex: borda floresta/campo).
   - **Interpretação Científica Rigorosa**:
-    O status `UNCERTAIN` reflete exclusivamente **rejeição por limiar configurado pelo operador** (`UNCERTAIN_BY_CONFIGURED_THRESHOLD`). Não representa incerteza epistemológica nem calibração probabilística Bayesiana.
+    O status `UNCERTAIN` reflete exclusivamente **rejeição por limiar configurado pelo operador** (`UNCERTAIN_BY_CONFIGURED_THRESHOLD`).
 
-- **Integridade dos Splits**:
-  - Validação estrita de `ROI-LEVEL SPLIT INTEGRITY + NON-OVERLAPPING 8x8 SAMPLE SUPPORTS ACROSS SPLITS` em todos os geradores de dataset. Não se alega independência espacial global irrestrita além dos mecanismos implementados.
+### 4. Papel do H3 & Grafo de Proveniência RIT
 
-### 4. Papel Futuro do H3 (Preparação Arquitetural)
+O H3 **não substitui** o raster nem o patch $8 \times 8$. O fluxo arquitetural canônico é:
+$$\text{Raster / Cena Sentinel} \longrightarrow \text{Patches Nativos } 8 \times 8 \longrightarrow \text{Classificação Densa C++} \longrightarrow \text{Centro Geográfico} \longrightarrow \text{Indexação/Agregação H3}$$
 
-O H3 **não substitui** a grade raster Sentinel nem o patch $8 \times 8$. O fluxo arquitetural planejado é:
-$$\text{Raster Sentinel} \longrightarrow \text{Patches Nativos } 8 \times 8 \longrightarrow \text{Classificação Densa C++} \longrightarrow \text{Centro Geográfico} \longrightarrow \text{Indexação/Agregação H3}$$
-
-O H3 será utilizado futuramente para:
-1. Seleção espacial balanceada de amostras;
-2. Prevenção de spatial leakage (células H3 disjuntas para TRAIN / DEV / PROBE);
-3. Agregação espacial (classe dominante, proporção por classe, % de incerteza);
-4. Comparação temporal multi-cena e integração com camadas web GIS.
+O H3 atua em:
+1. **Amostragem & Particionamento**: Prevenção de spatial leakage através da política 1 Célula H3 = 1 Split (sem prejuízo à checagem de disjunção geométrica de suportes $8 \times 8$).
+2. **Agregação Espacial**: Agrupamento estatístico em `classification_h3.csv` com proporção de classes e incertezas por hexágono.
+3. **Linhagem Temporal (RIT)**: Rastreabilidade explícita através de `provenance.json` e `evidence.jsonl` ligando fontes, ROIs, modelos e artefatos.
 
 ## Canonical verification
 

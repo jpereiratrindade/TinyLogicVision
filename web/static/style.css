@@ -1184,4 +1184,322 @@ body {
   gap: 6px;
 }
 
+/* Capabilities and Badges */
+.caps-pill {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.cap-tag {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--bg-tertiary);
+  color: var(--text-muted);
+}
+
+.cap-tag.ready {
+  background: rgba(16, 185, 129, 0.2);
+  color: #34d399;
+  border: 1px solid rgba(16, 185, 129, 0.4);
+}
+
+.badge-cyan {
+  background: rgba(6, 182, 212, 0.2);
+  color: #22d3ee;
+  border: 1px solid rgba(6, 182, 212, 0.4);
+}
+
+.badge-emerald {
+  background: rgba(16, 185, 129, 0.2);
+  color: #34d399;
+  border: 1px solid rgba(16, 185, 129, 0.4);
+}
+
+.badge-counter {
+  font-size: 10px;
+  background: var(--accent-primary);
+  color: #fff;
+  padding: 1px 6px;
+  border-radius: 10px;
+  margin-left: 4px;
+}
+
+/* Modality Selector Cards */
+.modality-selector-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.radio-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.radio-card:hover {
+  border-color: var(--accent-primary);
+}
+
+.radio-card.active {
+  background: rgba(59, 130, 246, 0.12);
+  border-color: var(--accent-primary);
+}
+
+.radio-card input[type="radio"] {
+  margin-top: 3px;
+  cursor: pointer;
+}
+
+.radio-card-content {
+  display: flex;
+  flex-direction: column;
+}
+
+.radio-title {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text-main);
+}
+
+.radio-desc {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+/* Multichannel Bands Schema Box */
+.bands-schema-box {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  padding: 10px;
+  margin-top: 10px;
+}
+
+.bands-box-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12px;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+.bands-table-wrapper {
+  overflow-x: auto;
+}
+
+.bands-spec-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+
+.bands-spec-table th, .bands-spec-table td {
+  padding: 4px 6px;
+  text-align: left;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.bands-spec-table th {
+  color: var(--text-muted);
+}
+
+/* Geospatial Metadata Card */
+.geo-meta-card {
+  background: rgba(6, 182, 212, 0.08);
+  border: 1px solid rgba(6, 182, 212, 0.3);
+  border-radius: var(--radius-sm);
+  padding: 10px;
+  margin-top: 10px;
+}
+
+.geo-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12px;
+  font-weight: 600;
+  margin-bottom: 6px;
+  color: #38bdf8;
+}
+
+/* H3 Split Card */
+.h3-split-card {
+  background: rgba(99, 102, 241, 0.08);
+  border: 1px solid rgba(99, 102, 241, 0.3);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  margin-top: 10px;
+}
+
+.h3-split-controls {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid rgba(99, 102, 241, 0.2);
+}
+
+/* Button Variants */
+.btn-geo {
+  border-color: rgba(6, 182, 212, 0.4);
+  color: #38bdf8;
+}
+
+.btn-geo:hover {
+  background: rgba(6, 182, 212, 0.15);
+}
+
+.btn-h3 {
+  border-color: rgba(99, 102, 241, 0.4);
+  color: #818cf8;
+}
+
+.btn-h3:hover {
+  background: rgba(99, 102, 241, 0.15);
+}
+
+.btn-rit {
+  border-color: rgba(16, 185, 129, 0.4);
+  color: #34d399;
+}
+
+.btn-rit:hover {
+  background: rgba(16, 185, 129, 0.15);
+}
+
+/* Async Jobs List */
+.jobs-list-container {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.job-card-item {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  transition: all 0.2s ease;
+}
+
+.job-card-item:hover {
+  border-color: var(--accent-primary);
+}
+
+.job-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.job-title {
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.job-meta-row {
+  display: flex;
+  gap: 12px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.job-progress-bar {
+  width: 100%;
+  height: 6px;
+  background: var(--bg-tertiary);
+  border-radius: 3px;
+  overflow: hidden;
+  margin-top: 4px;
+}
+
+.job-progress-fill {
+  height: 100%;
+  background: var(--accent-primary);
+  transition: width 0.3s ease;
+}
+
+.job-progress-fill.completed {
+  background: var(--accent-emerald);
+}
+
+.job-progress-fill.failed {
+  background: var(--accent-rose);
+}
+
+/* RIT Provenance Explorer */
+.full-width-card {
+  grid-column: 1 / -1;
+}
+
+.rit-graph-container {
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  padding: 16px;
+  margin-top: 10px;
+}
+
+.rit-legend {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.rit-tag {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+
+.tag-source { background: rgba(59, 130, 246, 0.2); color: #60a5fa; border: 1px solid #3b82f6; }
+.tag-roi { background: rgba(245, 158, 11, 0.2); color: #fbbf24; border: 1px solid #f59e0b; }
+.tag-patch { background: rgba(16, 185, 129, 0.2); color: #34d399; border: 1px solid #10b981; }
+.tag-dataset { background: rgba(139, 92, 246, 0.2); color: #a78bfa; border: 1px solid #8b5cf6; }
+.tag-model { background: rgba(236, 72, 153, 0.2); color: #f472b6; border: 1px solid #ec4899; }
+.tag-run { background: rgba(6, 182, 212, 0.2); color: #22d3ee; border: 1px solid #06b6d4; }
+.tag-artifact { background: rgba(100, 116, 139, 0.2); color: #94a3b8; border: 1px solid #64748b; }
+
+.rit-nodes-flow {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.rit-node-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: var(--bg-secondary);
+  border-radius: 4px;
+  font-size: 12px;
+}
+
+.rit-arrow {
+  color: var(--text-dim);
+}
+
 .hidden { display: none !important; }
