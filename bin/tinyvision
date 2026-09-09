@@ -1,0 +1,104 @@
+#!/usr/bin/env bash
+
+# TinyLogicVision canonical application CLI v0.1
+
+repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+build_dir="${TINYVISION_BUILD_DIR:-${repo_root}/build}"
+
+print_usage() {
+    cat <<'EOF'
+TinyLogicVision CLI v0.1
+
+Usage:
+  tinyvision train DATASET_ROOT MODEL_PATH
+  tinyvision classify MODEL_PATH IMAGE_PATH
+  tinyvision evaluate MODEL_PATH SPLIT_DIRECTORY
+  tinyvision verify
+  tinyvision --help | -h
+
+Commands:
+  train       Train model on DATASET_ROOT/train and observe DATASET_ROOT/dev
+  classify    Classify a single PNG/JPEG image using a trained model
+  evaluate    Evaluate a trained model on a labeled split directory (e.g. dev/ or probe/)
+  verify      Run the complete project verification suite
+
+Options:
+  -h, --help  Show this help message
+EOF
+}
+
+check_executable() {
+    local target="$1"
+    local hint="$2"
+    if [ ! -x "${target}" ]; then
+        printf 'tinyvision: executable not found or not executable: %s\n' "${target}" >&2
+        if [ -n "${hint}" ]; then
+            printf '%s\n' "${hint}" >&2
+        fi
+        return 1
+    fi
+    return 0
+}
+
+cmd="${1:-}"
+if [ -z "${cmd}" ]; then
+    print_usage >&2
+    exit 2
+fi
+
+shift
+
+case "${cmd}" in
+    -h|--help|help)
+        print_usage
+        exit 0
+        ;;
+    train)
+        target_bin="${build_dir}/tinyvision_train"
+        if ! check_executable "${target_bin}" "Build the project first: cmake -S '${repo_root}' -B '${build_dir}' -G Ninja -DCMAKE_BUILD_TYPE=Release && cmake --build '${build_dir}'"; then
+            exit 1
+        fi
+        if [ "$#" -ne 2 ]; then
+            printf 'usage: tinyvision train DATASET_ROOT MODEL_PATH\n' >&2
+            printf 'expected: DATASET_ROOT/train/CLASS/*.png and DATASET_ROOT/dev/CLASS/*.png\n' >&2
+            exit 2
+        fi
+        exec "${target_bin}" "$@"
+        ;;
+    classify)
+        target_bin="${build_dir}/tinyvision_classify"
+        if ! check_executable "${target_bin}" "Build the project first: cmake -S '${repo_root}' -B '${build_dir}' -G Ninja -DCMAKE_BUILD_TYPE=Release && cmake --build '${build_dir}'"; then
+            exit 1
+        fi
+        if [ "$#" -ne 2 ]; then
+            printf 'usage: tinyvision classify MODEL_PATH IMAGE_PATH\n' >&2
+            printf 'expected: MODEL_PATH (.tlv) and IMAGE_PATH (.png, .jpg, .jpeg)\n' >&2
+            exit 2
+        fi
+        exec "${target_bin}" "$@"
+        ;;
+    evaluate)
+        target_bin="${build_dir}/tinyvision_evaluate"
+        if ! check_executable "${target_bin}" "Build the project first: cmake -S '${repo_root}' -B '${build_dir}' -G Ninja -DCMAKE_BUILD_TYPE=Release && cmake --build '${build_dir}'"; then
+            exit 1
+        fi
+        if [ "$#" -ne 2 ]; then
+            printf 'usage: tinyvision evaluate MODEL_PATH SPLIT_DIRECTORY\n' >&2
+            printf 'expected: SPLIT_DIRECTORY/CLASS/*.png|*.jpg\n' >&2
+            exit 2
+        fi
+        exec "${target_bin}" "$@"
+        ;;
+    verify)
+        verify_script="${repo_root}/scripts/verify.sh"
+        if ! check_executable "${verify_script}" ""; then
+            exit 1
+        fi
+        exec "${verify_script}" "$@"
+        ;;
+    *)
+        printf 'tinyvision: unknown command: %s\n\n' "${cmd}" >&2
+        print_usage >&2
+        exit 2
+        ;;
+esac

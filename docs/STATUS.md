@@ -6,6 +6,8 @@
 experimental evidence    cd0a591 — TV-01B spatial-coverage result
 consolidated baseline    TV-READY-01 — commit containing this document
 application surface     TV-APP-00 — infrastructure and protocol implemented
+application CLI          v0.1 READY — canonical CLI entry point and test suite
+NATURAL APP PROBE        NOT_EVALUATED
 sealed TEST              NOT_EVALUATED
 ```
 
@@ -25,7 +27,11 @@ sealed TEST              NOT_EVALUATED
 - dynamic `192→24→N` application models, deterministic training, exact model
   persistence, individual classification, and labeled-split evaluation;
 - an end-to-end three-class raster-fixture test with model round-trip and a
-  held-out fixture split.
+  held-out fixture split;
+- a canonical application CLI entry point (`./bin/tinyvision`) orchestrating
+  training, classification, evaluation, and verification with full path independence
+  and CLI test coverage.
+
 
 VALIDATION never updated weights and remained frozen during TV-01B, but its
 TV-01A observations informed the intervention question. It is an experimental

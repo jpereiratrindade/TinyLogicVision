@@ -14,28 +14,42 @@ can now train and apply the same tiny MLP to labeled PNG/JPEG patches.
 | TV-01B | Spatial-coverage intervention | STRONG SUPPORT |
 | TV-01C | Sealed synthetic TEST | NOT EXECUTED |
 | TV-APP-00 | Real RGB application pipeline | READY — natural-image probe not executed |
+| Application CLI | Canonical v0.1 CLI interface | READY |
 
-TV-00 contains fixed-size 8x8 RGB inputs, one 24-unit `tanh` hidden layer,
-four softmax outputs, cross-entropy loss, a manual backward pass, and
-per-sample SGD on CPU. The model has 4,732 trainable parameters. Numerical
-gradient checking and deterministic training tests exercise the implementation.
+## Quick start
 
-No ML/tensor framework or pretrained model is used. The application layer uses
-libpng and libjpeg only for RGB decoding; the resize, model, loss, backward pass,
-training, persistence, and evaluation remain explicit project code. No SisTer
-integration, OBCE code, geospatial assumption, or web frontend is used.
+Build the release binaries, train, classify, evaluate, and verify via the canonical `./bin/tinyvision` CLI:
+
+```bash
+# 1. Build
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build
+
+# 2. Train on a dataset (trains on train/, observes dev/)
+./bin/tinyvision train ./dataset ./model.tlv
+
+# 3. Classify a single PNG/JPEG image
+./bin/tinyvision classify ./model.tlv ./example.jpg
+
+# 4. Evaluate on a labeled split
+./bin/tinyvision evaluate ./model.tlv ./dataset/dev
+
+# 5. Verify the entire project suite
+./bin/tinyvision verify
+```
 
 ## Canonical verification
 
-After cloning, run the complete synthetic baseline verification with:
+After cloning, run the complete project and synthetic baseline verification with:
 
 ```bash
-./scripts/verify.sh
+./bin/tinyvision verify
+# or: ./scripts/verify.sh
 ```
 
-The command configures and builds the Release/Ninja tree, runs all five tests,
-and checks the TV-00, TV-01A, TV-01B, and TV-APP-00 engineering witnesses. It
-does not evaluate synthetic TEST or a natural-image application probe.
+The command configures and builds the Release/Ninja tree, runs all six test suites
+(including the CLI test suite), and checks the TV-00, TV-01A, TV-01B, and TV-APP-00
+engineering witnesses. It does not evaluate synthetic TEST or a natural-image application probe.
 
 The equivalent manual build commands are:
 
@@ -47,6 +61,7 @@ ctest --test-dir build --output-on-failure
 
 Build prerequisites are a C++23 compiler, CMake, Ninja, and development packages
 for libpng and libjpeg.
+
 
 ## Evidence sequence
 
@@ -119,14 +134,15 @@ dataset/
 Train on `train/`, observe `dev/`, and persist the final epoch:
 
 ```bash
-./build/tinyvision_train ./dataset ./model.tlv
+./bin/tinyvision train ./dataset ./model.tlv
+# or direct binary: ./build/tinyvision_train ./dataset ./model.tlv
 ```
 
 Classify one image or explicitly evaluate a labeled probe:
 
 ```bash
-./build/tinyvision_classify ./model.tlv ./example.jpg
-./build/tinyvision_evaluate ./model.tlv ./dataset/probe
+./bin/tinyvision classify ./model.tlv ./example.jpg
+./bin/tinyvision evaluate ./model.tlv ./dataset/probe
 ```
 
 The training command never reads `probe/`. The output layer follows the number
