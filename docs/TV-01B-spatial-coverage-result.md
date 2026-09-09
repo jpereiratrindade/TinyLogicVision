@@ -178,9 +178,8 @@ Broader deterministic spatial coverage of TRAIN is sufficient to resolve the
 TV-01A validation failure within this fixed synthetic RGB family, seed,
 architecture, optimizer, and trajectory.
 
-This supports spatial coverage as the primary bottleneck exposed by TV-01A. It
-does not establish that spatial coverage is the only possible bottleneck or
-that the model has learned abstract translation invariance.
+This does not establish that spatial coverage was the unique or necessary
+cause, or that the model learned abstract translation invariance.
 
 ### Successor question
 
