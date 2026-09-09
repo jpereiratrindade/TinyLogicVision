@@ -267,3 +267,8 @@ See [TV-01A](docs/TV-01A-generalization-observatory.md), the
 [TV-01B preregistration](docs/TV-01B-spatial-coverage-preregistration.md), the
 [TV-01B result](docs/TV-01B-spatial-coverage-result.md), and the current
 [project status](docs/STATUS.md).
+
+## License
+
+This project is licensed under the **GNU General Public License v3.0** (GPL-3.0).
+See the [LICENSE](LICENSE) file for the full license text.
