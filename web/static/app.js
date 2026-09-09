@@ -845,7 +845,7 @@ const denseState = {
   classMapImg: null,
   confidenceImg: null,
   currentMode: 'overlay', // 'overlay' | 'class_map' | 'confidence' | 'source'
-  decisions: [],
+  inspectCache: {},
 };
 
 function setupDenseMap() {
@@ -905,7 +905,7 @@ function setupDenseMap() {
         alert('Erro ao carregar imagem: ' + data.error);
       }
     } catch (err) {
-      alert('Erro na requisição: ' + err);
+      alert('Erro na requisição: ' + (err.message || err));
     }
   });
 
@@ -944,14 +944,15 @@ function setupDenseMap() {
 
       denseState.runId = data.run_id;
       denseState.metadata = data.metadata;
+      denseState.inspectCache = {};
 
       // Load all images asynchronously
       const loadImage = (url) =>
         new Promise((resolve, reject) => {
           const img = new Image();
           img.onload = () => resolve(img);
-          img.onerror = reject;
-          img.src = `${url}?t=${Date.now()}`;
+          img.onerror = () => reject(new Error(`Falha ao carregar imagem: ${url}`));
+          img.src = `${url}${url.includes('?') ? '&' : '?'}t=${Date.now()}`;
         });
 
       [
@@ -965,15 +966,6 @@ function setupDenseMap() {
         loadImage(data.artifacts.confidence),
         loadImage(`/api/image?path=${encodeURIComponent(imagePath)}`),
       ]);
-
-      // Download and parse CSV for fast local inspection
-      try {
-        const csvRes = await fetch(data.artifacts.classification_csv);
-        const csvText = await csvRes.text();
-        parseDenseDecisions(csvText);
-      } catch (err) {
-        console.warn('Failed to parse classification.csv locally', err);
-      }
 
       // Update download links
       el.linkDownloadCsv.href = data.artifacts.classification_csv;
@@ -989,7 +981,7 @@ function setupDenseMap() {
 
       el.denseResultsPanel.classList.remove('hidden');
     } catch (err) {
-      alert('Erro na execução do mapa: ' + err);
+      alert('Erro na execução do mapa: ' + (err.message || err));
     } finally {
       el.btnRunDenseMap.disabled = false;
       el.denseProgress.classList.add('hidden');
@@ -999,22 +991,6 @@ function setupDenseMap() {
   // Canvas Mouse Inspection
   el.denseCanvas.addEventListener('mousemove', (e) => inspectPoint(e));
   el.denseCanvas.addEventListener('click', (e) => inspectPoint(e, true));
-}
-
-function parseDenseDecisions(csvText) {
-  const lines = csvText.trim().split('\n');
-  if (lines.length < 2) return;
-  const headers = lines[0].split(',');
-  denseState.decisions = [];
-  for (let i = 1; i < lines.length; ++i) {
-    const cols = lines[i].split(',');
-    if (cols.length < headers.length) continue;
-    const row = {};
-    headers.forEach((h, idx) => {
-      row[h.trim()] = cols[idx].trim();
-    });
-    denseState.decisions.push(row);
-  }
 }
 
 function renderDynamicLegend(meta) {
@@ -1028,18 +1004,8 @@ function renderDynamicLegend(meta) {
     ? `Janela 8x8 (80x80m nominal) • Stride ${meta.stride} (${meta.nominal_decision_spacing_m}m)`
     : `Janela 8x8 (Espaço de pixel da imagem) • Stride ${meta.stride}`;
 
-  // Count predictions per class from decisions if available
-  const counts = {};
-  let uncertainCount = 0;
-  if (denseState.decisions.length > 0) {
-    denseState.decisions.forEach((d) => {
-      if (d.status === 'UNCERTAIN') {
-        uncertainCount++;
-      } else {
-        counts[d.predicted_class] = (counts[d.predicted_class] || 0) + 1;
-      }
-    });
-  }
+  const counts = (meta.summary && meta.summary.class_counts) || {};
+  const uncertainCount = (meta.summary && meta.summary.uncertain_count) || 0;
 
   const palette = ['#22c55e', '#eab308', '#f97316', '#3b82f6', '#ec4899', '#a855f7', '#14b8a6'];
   let html = '';
@@ -1103,6 +1069,42 @@ function drawDenseCanvas() {
   }
 }
 
+function updateInspectorUI(decision, originX, originY, centerX, centerY, displayX, displayY, e) {
+  if (!decision) return;
+  el.inspOrigin.textContent = `(${originX}, ${originY})`;
+  el.inspCenter.textContent = `(${centerX.toFixed(1)}, ${centerY.toFixed(1)})`;
+  el.inspDisplay.textContent = `(${displayX}, ${displayY})`;
+  el.inspSupport.textContent = denseState.metadata.sentinel_native_10m
+    ? '8x8 px (80x80 m nominal)'
+    : '8x8 px (Espaço de pixel)';
+
+  const isUncertain = decision.status === 'UNCERTAIN';
+  el.inspStatus.textContent = decision.status;
+  el.inspStatus.className = 'badge ' + (isUncertain ? 'badge-uncertain' : 'badge-classified');
+
+  el.inspTop1Class.textContent = decision.predicted_class;
+  el.inspTop1Prob.textContent = `${(parseFloat(decision.probability) * 100).toFixed(2)}%`;
+  el.inspTop2Class.textContent = decision.second_class || '-';
+  el.inspTop2Prob.textContent = decision.second_probability
+    ? `${(parseFloat(decision.second_probability) * 100).toFixed(2)}%`
+    : '-';
+  el.inspMargin.textContent = decision.margin
+    ? `${(parseFloat(decision.margin) * 100).toFixed(2)}%`
+    : '-';
+
+  // Position crosshair
+  if (el.denseCrosshair && e) {
+    const canvasWrapper = el.denseCanvasContainer;
+    const wrapRect = canvasWrapper.getBoundingClientRect();
+    const crossX = e.clientX - wrapRect.left;
+    const crossY = e.clientY - wrapRect.top;
+    el.denseCrosshair.style.left = `${crossX}px`;
+    el.denseCrosshair.style.top = `${crossY}px`;
+    el.denseCrosshair.classList.remove('hidden');
+  }
+}
+
+let inspectThrottle = null;
 async function inspectPoint(e, isClick = false) {
   const canvas = el.denseCanvas;
   if (!canvas || !denseState.metadata) return;
@@ -1135,50 +1137,25 @@ async function inspectPoint(e, isClick = false) {
   const displayX = originX + 4;
   const displayY = originY + 4;
 
-  const targetRow = gy * nx + gx;
-  let decision = denseState.decisions[targetRow];
+  const cacheKey = `${originX}_${originY}`;
+  if (denseState.inspectCache[cacheKey]) {
+    updateInspectorUI(denseState.inspectCache[cacheKey], originX, originY, centerX, centerY, displayX, displayY, e);
+    return;
+  }
 
-  if (!decision && denseState.runId) {
+  if (inspectThrottle) return;
+  inspectThrottle = setTimeout(() => { inspectThrottle = null; }, 50);
+
+  if (denseState.runId) {
     try {
       const res = await fetch(`/api/runs/${denseState.runId}/inspect?x=${originX}&y=${originY}`);
       const data = await res.json();
-      if (data.success) decision = data.decision;
+      if (data.success && data.decision) {
+        denseState.inspectCache[cacheKey] = data.decision;
+        updateInspectorUI(data.decision, originX, originY, centerX, centerY, displayX, displayY, e);
+      }
     } catch (err) {
       console.warn('Inspect fetch failed', err);
-    }
-  }
-
-  if (decision) {
-    el.inspOrigin.textContent = `(${originX}, ${originY})`;
-    el.inspCenter.textContent = `(${centerX.toFixed(1)}, ${centerY.toFixed(1)})`;
-    el.inspDisplay.textContent = `(${displayX}, ${displayY})`;
-    el.inspSupport.textContent = denseState.metadata.sentinel_native_10m
-      ? '8x8 px (80x80 m nominal)'
-      : '8x8 px (Espaço de pixel)';
-
-    const isUncertain = decision.status === 'UNCERTAIN';
-    el.inspStatus.textContent = decision.status;
-    el.inspStatus.className = 'badge ' + (isUncertain ? 'badge-uncertain' : 'badge-classified');
-
-    el.inspTop1Class.textContent = decision.predicted_class;
-    el.inspTop1Prob.textContent = `${(parseFloat(decision.probability) * 100).toFixed(2)}%`;
-    el.inspTop2Class.textContent = decision.second_class || '-';
-    el.inspTop2Prob.textContent = decision.second_probability
-      ? `${(parseFloat(decision.second_probability) * 100).toFixed(2)}%`
-      : '-';
-    el.inspMargin.textContent = decision.margin
-      ? `${(parseFloat(decision.margin) * 100).toFixed(2)}%`
-      : '-';
-
-    // Position crosshair
-    if (el.denseCrosshair) {
-      const canvasWrapper = el.denseCanvasContainer;
-      const wrapRect = canvasWrapper.getBoundingClientRect();
-      const crossX = e.clientX - wrapRect.left;
-      const crossY = e.clientY - wrapRect.top;
-      el.denseCrosshair.style.left = `${crossX}px`;
-      el.denseCrosshair.style.top = `${crossY}px`;
-      el.denseCrosshair.classList.remove('hidden');
     }
   }
 }
