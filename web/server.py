@@ -406,7 +406,7 @@ class TinyVisionRequestHandler(http.server.BaseHTTPRequestHandler):
                 arr_8u = np.clip(arr * scale, 0, 255).astype(np.uint8)
                 rgb_arr = np.dstack([arr_8u, arr_8u, arr_8u])
                 if HAS_PIL:
-                    out_img = PILImage.fromarray(rgb_arr, "RGB")
+                    out_img = PILImage.fromarray(rgb_arr)
                     buf = io.BytesIO()
                     out_img.save(buf, format="PNG")
                     png_bytes = buf.getvalue()
@@ -1480,7 +1480,7 @@ class TinyVisionRequestHandler(http.server.BaseHTTPRequestHandler):
                 # Read TCI directly
                 _, _, tci_arr, _, _ = read_band_2d(tci_path, max_dim=preview_max_dim)
                 if tci_arr is not None and tci_arr.ndim == 3:
-                    tc_img = PILImage.fromarray(np.clip(tci_arr, 0, 255).astype(np.uint8), "RGB") if HAS_PIL else None
+                    tc_img = PILImage.fromarray(np.clip(tci_arr, 0, 255).astype(np.uint8)) if HAS_PIL else None
                 else:
                     tc_img = None
             else:
@@ -1493,7 +1493,7 @@ class TinyVisionRequestHandler(http.server.BaseHTTPRequestHandler):
                 g = np.clip(arr3 * scale, 0, 255).astype(np.uint8)
                 b = np.clip(arr2 * scale, 0, 255).astype(np.uint8)
                 tc_composite = np.dstack([r, g, b])
-                tc_img = PILImage.fromarray(tc_composite, 'RGB') if HAS_PIL else None
+                tc_img = PILImage.fromarray(tc_composite) if HAS_PIL else None
 
             preview_tc_path = UPLOADS_DIR / f"s2_tc_{prev_hash}.png"
             if tc_img and HAS_PIL:
@@ -1510,7 +1510,7 @@ class TinyVisionRequestHandler(http.server.BaseHTTPRequestHandler):
             fc_composite = np.dstack([fc_r, fc_g, fc_b])
             preview_fc_path = UPLOADS_DIR / f"s2_fc_nir_{prev_hash}.png"
             if HAS_PIL:
-                PILImage.fromarray(fc_composite, 'RGB').save(preview_fc_path, format="PNG")
+                PILImage.fromarray(fc_composite).save(preview_fc_path, format="PNG")
             else:
                 save_png_patch(fc_composite.tobytes(), pw, ph, preview_fc_path)
 
@@ -1521,7 +1521,7 @@ class TinyVisionRequestHandler(http.server.BaseHTTPRequestHandler):
             fc_g_composite = np.dstack([fc_g_r, fc_g_g, fc_g_b])
             preview_fc_green_path = UPLOADS_DIR / f"s2_fc_green_{prev_hash}.png"
             if HAS_PIL:
-                PILImage.fromarray(fc_g_composite, 'RGB').save(preview_fc_green_path, format="PNG")
+                PILImage.fromarray(fc_g_composite).save(preview_fc_green_path, format="PNG")
             else:
                 save_png_patch(fc_g_composite.tobytes(), pw, ph, preview_fc_green_path)
 
@@ -1537,7 +1537,7 @@ class TinyVisionRequestHandler(http.server.BaseHTTPRequestHandler):
             ndvi_composite = np.dstack([ndvi_r, ndvi_g, ndvi_b])
             preview_ndvi_path = UPLOADS_DIR / f"s2_ndvi_{prev_hash}.png"
             if HAS_PIL:
-                PILImage.fromarray(ndvi_composite, 'RGB').save(preview_ndvi_path, format="PNG")
+                PILImage.fromarray(ndvi_composite).save(preview_ndvi_path, format="PNG")
             else:
                 save_png_patch(ndvi_composite.tobytes(), pw, ph, preview_ndvi_path)
 
