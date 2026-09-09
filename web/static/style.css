@@ -43,12 +43,13 @@ body {
   font-size: 14px;
   min-height: 100vh;
   overflow-x: hidden;
+  overflow-y: auto;
 }
 
 .app-container {
   display: flex;
   flex-direction: column;
-  height: 100vh;
+  min-height: 100vh;
   max-width: 1600px;
   margin: 0 auto;
   padding: 16px 24px;
@@ -191,7 +192,7 @@ body {
 .tab-content {
   display: none;
   flex: 1;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .tab-content.active {
