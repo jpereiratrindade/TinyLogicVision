@@ -24,6 +24,7 @@ add_library(tinyvision_application
     src/tensor.cpp
     src/geo.cpp
     src/sentinel.cpp
+    src/provenance.cpp
 )
 target_include_directories(tinyvision_application PUBLIC include)
 target_link_libraries(tinyvision_application PUBLIC tinyvision_core PNG::PNG JPEG::JPEG)
@@ -79,6 +80,10 @@ add_test(NAME geo_dense_test COMMAND geo_dense_test)
 add_executable(sentinel_test tests/sentinel_test.cpp)
 target_link_libraries(sentinel_test PRIVATE tinyvision_application)
 add_test(NAME sentinel_test COMMAND sentinel_test)
+
+add_executable(provenance_test tests/provenance_test.cpp)
+target_link_libraries(provenance_test PRIVATE tinyvision_application)
+add_test(NAME provenance_test COMMAND provenance_test)
 
 add_executable(training_test tests/training_test.cpp)
 target_link_libraries(training_test PRIVATE tinyvision_core)
