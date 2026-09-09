@@ -1,5 +1,4 @@
 #include "tinyvision/application.hpp"
-
 #include "tinyvision/image.hpp"
 
 #include <algorithm>
@@ -21,7 +20,8 @@ constexpr std::size_t kImageWidth = 8;
 constexpr std::size_t kImageHeight = 8;
 constexpr std::array<std::size_t, 8> kMilestones{1, 10, 30, 60, 90, 120, 150, 180};
 constexpr const char* kModelMagic = "TINYLOGICVISION_APP_MODEL";
-constexpr std::size_t kModelVersion = 1;
+constexpr std::size_t kModelVersionV1 = 1;
+constexpr std::size_t kModelVersionV2 = 2;
 
 bool supported_image(const std::filesystem::path& path) {
     auto extension = path.extension().string();
@@ -71,8 +71,18 @@ ApplicationModel::ApplicationModel(std::vector<std::string> names,
                                    std::size_t height,
                                    MLP model)
     : class_names(std::move(names)),
+      schema(InputSchema::create_canonical_rgb(width, height)),
       image_width(width),
       image_height(height),
+      network(std::move(model)) {}
+
+ApplicationModel::ApplicationModel(std::vector<std::string> names,
+                                   InputSchema input_schema,
+                                   MLP model)
+    : class_names(std::move(names)),
+      schema(std::move(input_schema)),
+      image_width(schema.width),
+      image_height(schema.height),
       network(std::move(model)) {}
 
 ApplicationTrainingResult::ApplicationTrainingResult(
@@ -98,6 +108,7 @@ ApplicationSplit load_application_split(const std::filesystem::path& split_direc
 
     ApplicationSplit split;
     split.class_names = class_names;
+    split.schema = InputSchema::create_canonical_rgb(kImageWidth, kImageHeight);
     for (std::size_t label = 0; label < class_names.size(); ++label) {
         const auto directory = split_directory / class_names[label];
         for (const auto& path : class_images(directory)) {
@@ -156,12 +167,16 @@ ApplicationTrainingResult train_application(const ApplicationSplit& train,
     if (train.class_names != development.class_names) {
         throw std::invalid_argument("TRAIN and DEV classes differ");
     }
+    if (train.schema != development.schema) {
+        throw std::invalid_argument("TRAIN and DEV schemas differ");
+    }
     if (config.hidden_size == 0 || config.epochs == 0 ||
         !(config.learning_rate > 0.0) || !std::isfinite(config.learning_rate)) {
         throw std::invalid_argument("invalid application training configuration");
     }
 
-    MLP model(kImageWidth * kImageHeight * 3,
+    const std::size_t expected_inputs = train.schema.input_size();
+    MLP model(expected_inputs,
               config.hidden_size,
               train.class_names.size(),
               config.model_seed);
@@ -186,7 +201,7 @@ ApplicationTrainingResult train_application(const ApplicationSplit& train,
 
     auto final_train = evaluate_application(model, train);
     auto final_development = evaluate_application(model, development);
-    ApplicationModel artifact(train.class_names, kImageWidth, kImageHeight, std::move(model));
+    ApplicationModel artifact(train.class_names, train.schema, std::move(model));
     return {std::move(artifact),
             std::move(final_train),
             std::move(final_development),
@@ -195,17 +210,28 @@ ApplicationTrainingResult train_application(const ApplicationSplit& train,
 
 void save_application_model(const ApplicationModel& model, const std::filesystem::path& path) {
     if (model.class_names.size() != model.network.output_size() ||
-        model.network.input_size() != model.image_width * model.image_height * 3) {
+        model.network.input_size() != model.schema.input_size()) {
         throw std::invalid_argument("inconsistent application model");
     }
     std::ofstream output(path, std::ios::trunc);
     if (!output) throw std::runtime_error("cannot create model file: " + path.string());
 
-    output << kModelMagic << ' ' << kModelVersion << '\n'
-           << model.image_width << ' ' << model.image_height << ' '
+    // Save as Model Format v2
+    output << kModelMagic << ' ' << kModelVersionV2 << '\n'
+           << model.schema.width << ' ' << model.schema.height << ' ' << model.schema.channels << ' '
+           << modality_to_string(model.schema.modality) << ' ' << layout_to_string(model.schema.layout) << ' '
            << model.network.hidden_size() << ' ' << model.network.output_size() << '\n'
            << model.class_names.size() << '\n';
     for (const auto& name : model.class_names) output << std::quoted(name) << '\n';
+
+    output << model.schema.channel_specs.size() << '\n';
+    for (const auto& ch : model.schema.channel_specs) {
+        output << std::quoted(ch.id) << ' ' << std::quoted(ch.name) << ' '
+               << std::quoted(ch.role) << ' ' << std::quoted(ch.unit) << ' '
+               << normalization_to_string(ch.normalization.type) << ' '
+               << std::setprecision(std::numeric_limits<double>::max_digits10)
+               << ch.normalization.scale << ' ' << ch.normalization.offset << '\n';
+    }
 
     const auto parameters = model.network.parameters();
     output << parameters.size() << '\n'
@@ -221,40 +247,117 @@ ApplicationModel load_application_model(const std::filesystem::path& path) {
 
     std::string magic;
     std::size_t version = 0;
-    std::size_t width = 0;
-    std::size_t height = 0;
-    std::size_t hidden = 0;
-    std::size_t output_size = 0;
-    std::size_t class_count = 0;
-    input >> magic >> version >> width >> height >> hidden >> output_size >> class_count;
-    if (!input || magic != kModelMagic || version != kModelVersion ||
-        width != kImageWidth || height != kImageHeight || hidden == 0 || hidden > 4096 ||
-        output_size < 2 || output_size > 1024 || class_count != output_size) {
-        throw std::runtime_error("invalid or unsupported model header: " + path.string());
+    input >> magic >> version;
+
+    if (!input || magic != kModelMagic) {
+        throw std::runtime_error("invalid model magic: " + path.string());
     }
 
-    std::vector<std::string> class_names(class_count);
-    for (auto& name : class_names) input >> std::quoted(name);
-    std::size_t parameter_count = 0;
-    input >> parameter_count;
-    const std::size_t expected_parameters =
-        hidden * width * height * 3 + hidden + output_size * hidden + output_size;
-    if (!input || parameter_count != expected_parameters ||
-        std::any_of(class_names.begin(), class_names.end(),
-                    [](const std::string& name) { return name.empty(); }) ||
-        !std::is_sorted(class_names.begin(), class_names.end()) ||
-        std::adjacent_find(class_names.begin(), class_names.end()) != class_names.end()) {
-        throw std::runtime_error("inconsistent model metadata: " + path.string());
-    }
-    std::vector<double> parameters(parameter_count);
-    for (auto& parameter : parameters) input >> parameter;
-    if (!input) throw std::runtime_error("truncated model file: " + path.string());
-    input >> std::ws;
-    if (!input.eof()) throw std::runtime_error("unexpected data after model parameters");
+    if (version == kModelVersionV1) {
+        std::size_t width = 0;
+        std::size_t height = 0;
+        std::size_t hidden = 0;
+        std::size_t output_size = 0;
+        std::size_t class_count = 0;
+        input >> width >> height >> hidden >> output_size >> class_count;
+        if (!input || width != kImageWidth || height != kImageHeight || hidden == 0 || hidden > 4096 ||
+            output_size < 2 || output_size > 1024 || class_count != output_size) {
+            throw std::runtime_error("invalid v1 model header: " + path.string());
+        }
 
-    MLP model(width * height * 3, hidden, output_size, 0);
-    model.set_parameters(parameters);
-    return {std::move(class_names), width, height, std::move(model)};
+        std::vector<std::string> class_names(class_count);
+        for (auto& name : class_names) input >> std::quoted(name);
+        std::size_t parameter_count = 0;
+        input >> parameter_count;
+        const std::size_t expected_parameters =
+            hidden * width * height * 3 + hidden + output_size * hidden + output_size;
+        if (!input || parameter_count != expected_parameters ||
+            std::any_of(class_names.begin(), class_names.end(),
+                        [](const std::string& name) { return name.empty(); }) ||
+            !std::is_sorted(class_names.begin(), class_names.end()) ||
+            std::adjacent_find(class_names.begin(), class_names.end()) != class_names.end()) {
+            throw std::runtime_error("inconsistent v1 model metadata: " + path.string());
+        }
+        std::vector<double> parameters(parameter_count);
+        for (auto& parameter : parameters) input >> parameter;
+        if (!input) throw std::runtime_error("truncated v1 model file: " + path.string());
+        input >> std::ws;
+        if (!input.eof()) throw std::runtime_error("unexpected data after v1 model parameters");
+
+        MLP model(width * height * 3, hidden, output_size, 0);
+        model.set_parameters(parameters);
+        return {std::move(class_names), width, height, std::move(model)};
+    } else if (version == kModelVersionV2) {
+        std::size_t width = 0;
+        std::size_t height = 0;
+        std::size_t channels = 0;
+        std::string modality_str;
+        std::string layout_str;
+        std::size_t hidden = 0;
+        std::size_t output_size = 0;
+        std::size_t class_count = 0;
+
+        input >> width >> height >> channels >> modality_str >> layout_str >> hidden >> output_size >> class_count;
+        if (!input || width == 0 || height == 0 || channels == 0 || hidden == 0 || hidden > 4096 ||
+            output_size < 2 || output_size > 1024 || class_count != output_size) {
+            throw std::runtime_error("invalid v2 model header: " + path.string());
+        }
+
+        std::vector<std::string> class_names(class_count);
+        for (auto& name : class_names) input >> std::quoted(name);
+
+        std::size_t channel_count = 0;
+        input >> channel_count;
+        if (!input || channel_count != channels) {
+            throw std::runtime_error("channel count mismatch in v2 model: " + path.string());
+        }
+
+        std::vector<ChannelSpec> channel_specs(channel_count);
+        for (std::size_t i = 0; i < channel_count; ++i) {
+            std::string norm_str;
+            double scale = 1.0;
+            double offset = 0.0;
+            input >> std::quoted(channel_specs[i].id)
+                  >> std::quoted(channel_specs[i].name)
+                  >> std::quoted(channel_specs[i].role)
+                  >> std::quoted(channel_specs[i].unit)
+                  >> norm_str >> scale >> offset;
+            channel_specs[i].normalization = {string_to_normalization(norm_str), scale, offset};
+        }
+
+        std::size_t parameter_count = 0;
+        input >> parameter_count;
+        const std::size_t expected_inputs = width * height * channels;
+        const std::size_t expected_parameters =
+            hidden * expected_inputs + hidden + output_size * hidden + output_size;
+        if (!input || parameter_count != expected_parameters ||
+            std::any_of(class_names.begin(), class_names.end(),
+                        [](const std::string& name) { return name.empty(); }) ||
+            !std::is_sorted(class_names.begin(), class_names.end()) ||
+            std::adjacent_find(class_names.begin(), class_names.end()) != class_names.end()) {
+            throw std::runtime_error("inconsistent v2 model metadata: " + path.string());
+        }
+
+        std::vector<double> parameters(parameter_count);
+        for (auto& parameter : parameters) input >> parameter;
+        if (!input) throw std::runtime_error("truncated v2 model file: " + path.string());
+        input >> std::ws;
+        if (!input.eof()) throw std::runtime_error("unexpected data after v2 model parameters");
+
+        InputSchema schema;
+        schema.width = width;
+        schema.height = height;
+        schema.channels = channels;
+        schema.modality = string_to_modality(modality_str);
+        schema.layout = string_to_layout(layout_str);
+        schema.channel_specs = std::move(channel_specs);
+
+        MLP model(expected_inputs, hidden, output_size, 0);
+        model.set_parameters(parameters);
+        return {std::move(class_names), std::move(schema), std::move(model)};
+    } else {
+        throw std::runtime_error("unsupported model version: " + std::to_string(version));
+    }
 }
 
 } // namespace tinyvision

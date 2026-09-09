@@ -57,6 +57,10 @@ add_executable(core_perf_test tests/core_perf_test.cpp)
 target_link_libraries(core_perf_test PRIVATE tinyvision_core)
 add_test(NAME core_perf_test COMMAND core_perf_test)
 
+add_executable(schema_model_test tests/schema_model_test.cpp)
+target_link_libraries(schema_model_test PRIVATE tinyvision_application)
+add_test(NAME schema_model_test COMMAND schema_model_test)
+
 add_executable(training_test tests/training_test.cpp)
 target_link_libraries(training_test PRIVATE tinyvision_core)
 add_test(NAME training_test COMMAND training_test)

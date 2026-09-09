@@ -1,6 +1,7 @@
 #pragma once
 
 #include "tinyvision/model.hpp"
+#include "tinyvision/schema.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -18,6 +19,7 @@ struct ApplicationSample {
 
 struct ApplicationSplit {
     std::vector<std::string> class_names;
+    InputSchema schema{InputSchema::create_canonical_rgb()};
     std::vector<ApplicationSample> samples;
 };
 
@@ -30,13 +32,18 @@ struct ApplicationMetrics {
 
 struct ApplicationModel {
     std::vector<std::string> class_names;
-    std::size_t image_width{};
-    std::size_t image_height{};
+    InputSchema schema{InputSchema::create_canonical_rgb()};
+    std::size_t image_width{8};
+    std::size_t image_height{8};
     MLP network;
 
     ApplicationModel(std::vector<std::string> names,
                      std::size_t width,
                      std::size_t height,
+                     MLP model);
+
+    ApplicationModel(std::vector<std::string> names,
+                     InputSchema input_schema,
                      MLP model);
 };
 
