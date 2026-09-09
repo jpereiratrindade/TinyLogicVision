@@ -75,8 +75,10 @@ const el = {
   // Classify & Eval
   classifySelectModel: document.getElementById('classify-select-model'),
   classifyImageFile: document.getElementById('classify-image-file'),
+  classifyPreviewImg: document.getElementById('classify-preview-img'),
   btnRunClassify: document.getElementById('btn-run-classify'),
   classifyResults: document.getElementById('classify-results'),
+
   classifyPredClass: document.getElementById('classify-pred-class'),
   classifyPredScore: document.getElementById('classify-pred-score'),
   classifyProbsContainer: document.getElementById('classify-probs-container'),
@@ -689,6 +691,10 @@ function setupClassifyAndEval() {
 
       el.classifyPredClass.textContent = data.predicted;
       el.classifyPredScore.textContent = `Score: ${(data.score * 100).toFixed(2)}%`;
+      if (el.classifyPreviewImg) {
+        el.classifyPreviewImg.src = URL.createObjectURL(files[0]);
+      }
+
 
       el.classifyProbsContainer.innerHTML = '';
       Object.entries(data.probabilities).forEach(([clsName, prob]) => {

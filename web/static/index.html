@@ -310,10 +310,18 @@
           <button id="btn-run-classify" class="btn btn-primary">🔍 Classificar</button>
 
           <div id="classify-results" class="results-box hidden">
-            <h4>Resultado:</h4>
-            <div class="predicted-banner">
-              Classe Predita: <strong id="classify-pred-class" class="text-emerald">-</strong>
-              <span id="classify-pred-score" class="score-badge">-</span>
+            <h4>Resultado da Classificação:</h4>
+            <div class="classified-card-header">
+              <div class="thumbnail-wrapper">
+                <img id="classify-preview-img" class="classified-thumbnail" alt="Preview da Imagem">
+              </div>
+              <div class="predicted-banner">
+                <div>
+                  <span class="pred-label">Classe Predita:</span>
+                  <strong id="classify-pred-class" class="text-emerald">-</strong>
+                </div>
+                <span id="classify-pred-score" class="score-badge">-</span>
+              </div>
             </div>
             <div id="classify-probs-container" class="prob-bars-container"></div>
           </div>
