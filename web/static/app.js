@@ -112,10 +112,7 @@ const el = {
   denseCanvas: document.getElementById('dense-canvas'),
   denseCanvasContainer: document.getElementById('dense-canvas-container'),
   denseCrosshair: document.getElementById('dense-crosshair'),
-  denseChkOverlay: document.getElementById('dense-chk-overlay'),
-  denseSliderOpacity: document.getElementById('dense-slider-opacity'),
-  denseOpacityVal: document.getElementById('dense-opacity-val'),
-  denseChkShowUncertain: document.getElementById('dense-chk-show-uncertain'),
+  inspGrid: document.getElementById('insp-grid'),
   inspOrigin: document.getElementById('insp-origin'),
   inspCenter: document.getElementById('insp-center'),
   inspDisplay: document.getElementById('insp-display'),
@@ -133,6 +130,8 @@ const el = {
   linkDownloadJson: document.getElementById('link-download-json'),
   linkDownloadOverlay: document.getElementById('link-download-overlay'),
   linkDownloadClassmap: document.getElementById('link-download-classmap'),
+  linkDownloadConfidencemap: document.getElementById('link-download-confidencemap'),
+  linkDownloadMarginmap: document.getElementById('link-download-marginmap'),
   // Browser
   browserDatasetsList: document.getElementById('browser-datasets-list'),
   browserModelsList: document.getElementById('browser-models-list'),
@@ -844,7 +843,8 @@ const denseState = {
   overlayImg: null,
   classMapImg: null,
   confidenceImg: null,
-  currentMode: 'overlay', // 'overlay' | 'class_map' | 'confidence' | 'source'
+  marginImg: null,
+  currentMode: 'overlay', // 'overlay' | 'class_map' | 'confidence' | 'margin' | 'source'
   inspectCache: {},
 };
 
@@ -860,11 +860,6 @@ function setupDenseMap() {
     el.denseValMargin.textContent = parseFloat(e.target.value).toFixed(2);
   });
 
-  el.denseSliderOpacity.addEventListener('input', (e) => {
-    el.denseOpacityVal.textContent = `${e.target.value}%`;
-    drawDenseCanvas();
-  });
-
   el.denseChkSentinel10m.addEventListener('change', (e) => {
     const isSent = e.target.checked;
     el.denseSentinelBadge.textContent = isSent
@@ -872,9 +867,6 @@ function setupDenseMap() {
       : 'DISPLAY IMAGE — NO 10 m GUARANTEE';
     el.denseSentinelBadge.className = 'resolution-badge ' + (isSent ? 'sentinel-native' : 'display-only');
   });
-
-  el.denseChkOverlay.addEventListener('change', () => drawDenseCanvas());
-  el.denseChkShowUncertain.addEventListener('change', () => drawDenseCanvas());
 
   // View Mode buttons
   const modeBtns = document.querySelectorAll('.btn-mode');
@@ -959,21 +951,25 @@ function setupDenseMap() {
         denseState.overlayImg,
         denseState.classMapImg,
         denseState.confidenceImg,
+        denseState.marginImg,
         denseState.sourceImg,
       ] = await Promise.all([
         loadImage(data.artifacts.overlay),
         loadImage(data.artifacts.class_map),
         loadImage(data.artifacts.confidence),
+        loadImage(data.artifacts.margin),
         loadImage(`/api/image?path=${encodeURIComponent(imagePath)}`),
       ]);
 
       // Update download links
-      el.linkDownloadCsv.href = data.artifacts.classification_csv;
-      el.linkDownloadJson.href = data.artifacts.run_json;
-      el.linkDownloadOverlay.href = data.artifacts.overlay;
-      el.linkDownloadClassmap.href = data.artifacts.class_map;
+      if (el.linkDownloadCsv) el.linkDownloadCsv.href = data.artifacts.classification_csv;
+      if (el.linkDownloadJson) el.linkDownloadJson.href = data.artifacts.run_json;
+      if (el.linkDownloadOverlay) el.linkDownloadOverlay.href = data.artifacts.overlay;
+      if (el.linkDownloadClassmap) el.linkDownloadClassmap.href = data.artifacts.class_map;
+      if (el.linkDownloadConfidencemap) el.linkDownloadConfidencemap.href = data.artifacts.confidence;
+      if (el.linkDownloadMarginmap) el.linkDownloadMarginmap.href = data.artifacts.margin;
 
-      // Render Dynamic Legend
+      // Render Dynamic Legend from canonical palette in run.json
       renderDynamicLegend(data.metadata);
 
       // Render Canvas
@@ -995,29 +991,36 @@ function setupDenseMap() {
 
 function renderDynamicLegend(meta) {
   if (!el.denseDynamicLegend || !meta) return;
-  const classes = meta.classes || [];
   const total = meta.decision_count || 0;
-  el.denseTotalDecisions.textContent = `${total.toLocaleString()} decisões`;
+  if (el.denseTotalDecisions) {
+    el.denseTotalDecisions.textContent = `${total.toLocaleString()} decisões`;
+  }
 
-  const isSent = meta.sentinel_native_10m;
-  el.denseContextInfo.textContent = isSent
-    ? `Janela 8x8 (80x80m nominal) • Stride ${meta.stride} (${meta.nominal_decision_spacing_m}m)`
-    : `Janela 8x8 (Espaço de pixel da imagem) • Stride ${meta.stride}`;
+  const isSent = meta.sentinel_nominal_10m || meta.sentinel_native_10m;
+  if (el.denseContextInfo) {
+    el.denseContextInfo.textContent = isSent
+      ? `Suporte 8x8 (80x80m nominal) • Stride ${meta.stride} (${meta.stride * 10}m nominal)`
+      : `Suporte 8x8 (Espaço de pixel) • Stride ${meta.stride}`;
+  }
 
   const counts = (meta.summary && meta.summary.class_counts) || {};
   const uncertainCount = (meta.summary && meta.summary.uncertain_count) || 0;
 
-  const palette = ['#22c55e', '#eab308', '#f97316', '#3b82f6', '#ec4899', '#a855f7', '#14b8a6'];
+  // Single authority: palette from metadata / run.json
+  const paletteClasses = (meta.palette && meta.palette.classes) || [];
+  const uncColor = (meta.palette && meta.palette.uncertain && meta.palette.uncertain.color) || '#808080';
+
   let html = '';
-  classes.forEach((cls, idx) => {
-    const color = palette[idx % palette.length];
-    const cCount = counts[cls] || 0;
+  paletteClasses.forEach((cls) => {
+    const cName = cls.name;
+    const color = cls.color;
+    const cCount = counts[cName] || 0;
     const pct = total > 0 ? ((cCount / total) * 100).toFixed(1) : '0.0';
     html += `
       <div class="legend-item">
         <div style="display:flex;align-items:center;">
           <span class="legend-color-dot" style="background-color: ${color};"></span>
-          <strong>${cls}</strong>
+          <strong>${cName}</strong>
         </div>
         <span class="mono">${cCount.toLocaleString()} (${pct}%)</span>
       </div>
@@ -1027,10 +1030,10 @@ function renderDynamicLegend(meta) {
   // UNCERTAIN item
   const uncPct = total > 0 ? ((uncertainCount / total) * 100).toFixed(1) : '0.0';
   html += `
-    <div class="legend-item" style="border-left: 3px solid #808080;">
+    <div class="legend-item" style="border-left: 3px solid ${uncColor};">
       <div style="display:flex;align-items:center;">
-        <span class="legend-color-dot" style="background-color: #808080;"></span>
-        <em>UNCERTAIN (Incerteza)</em>
+        <span class="legend-color-dot" style="background-color: ${uncColor};"></span>
+        <em>UNCERTAIN (Por limiar configurado)</em>
       </div>
       <span class="mono">${uncertainCount.toLocaleString()} (${uncPct}%)</span>
     </div>
@@ -1044,53 +1047,91 @@ function drawDenseCanvas() {
   if (!canvas || !denseState.sourceImg) return;
 
   const dctx = canvas.getContext('2d');
-  const w = denseState.sourceImg.naturalWidth || denseState.sourceImg.width;
-  const h = denseState.sourceImg.naturalHeight || denseState.sourceImg.height;
-
-  canvas.width = w;
-  canvas.height = h;
-  dctx.clearRect(0, 0, w, h);
+  const sw = denseState.sourceImg.naturalWidth || denseState.sourceImg.width;
+  const sh = denseState.sourceImg.naturalHeight || denseState.sourceImg.height;
 
   const mode = denseState.currentMode;
   if (mode === 'source') {
+    canvas.width = sw;
+    canvas.height = sh;
+    dctx.imageSmoothingEnabled = false;
+    dctx.clearRect(0, 0, sw, sh);
     dctx.drawImage(denseState.sourceImg, 0, 0);
-  } else if (mode === 'class_map') {
-    dctx.drawImage(denseState.classMapImg, 0, 0);
-  } else if (mode === 'confidence') {
-    dctx.drawImage(denseState.confidenceImg, 0, 0);
   } else if (mode === 'overlay') {
-    dctx.drawImage(denseState.sourceImg, 0, 0);
-    if (el.denseChkOverlay.checked && denseState.classMapImg) {
-      const alpha = parseInt(el.denseSliderOpacity.value, 10) / 100.0;
-      dctx.globalAlpha = alpha;
+    // Single Canonical Overlay Authority: C++ engine generated overlay.png
+    canvas.width = sw;
+    canvas.height = sh;
+    dctx.imageSmoothingEnabled = false;
+    dctx.clearRect(0, 0, sw, sh);
+    if (denseState.overlayImg) {
+      dctx.drawImage(denseState.overlayImg, 0, 0);
+    } else {
+      dctx.drawImage(denseState.sourceImg, 0, 0);
+    }
+  } else if (mode === 'class_map') {
+    if (denseState.classMapImg) {
+      const gw = denseState.classMapImg.naturalWidth || denseState.classMapImg.width;
+      const gh = denseState.classMapImg.naturalHeight || denseState.classMapImg.height;
+      canvas.width = gw;
+      canvas.height = gh;
+      dctx.imageSmoothingEnabled = false;
+      dctx.clearRect(0, 0, gw, gh);
       dctx.drawImage(denseState.classMapImg, 0, 0);
-      dctx.globalAlpha = 1.0;
+    }
+  } else if (mode === 'confidence') {
+    if (denseState.confidenceImg) {
+      const gw = denseState.confidenceImg.naturalWidth || denseState.confidenceImg.width;
+      const gh = denseState.confidenceImg.naturalHeight || denseState.confidenceImg.height;
+      canvas.width = gw;
+      canvas.height = gh;
+      dctx.imageSmoothingEnabled = false;
+      dctx.clearRect(0, 0, gw, gh);
+      dctx.drawImage(denseState.confidenceImg, 0, 0);
+    }
+  } else if (mode === 'margin') {
+    if (denseState.marginImg) {
+      const gw = denseState.marginImg.naturalWidth || denseState.marginImg.width;
+      const gh = denseState.marginImg.naturalHeight || denseState.marginImg.height;
+      canvas.width = gw;
+      canvas.height = gh;
+      dctx.imageSmoothingEnabled = false;
+      dctx.clearRect(0, 0, gw, gh);
+      dctx.drawImage(denseState.marginImg, 0, 0);
     }
   }
 }
 
-function updateInspectorUI(decision, originX, originY, centerX, centerY, displayX, displayY, e) {
+function updateInspectorUI(decision, originX, originY, centerX, centerY, displayX, displayY, gx, gy, e) {
   if (!decision) return;
-  el.inspOrigin.textContent = `(${originX}, ${originY})`;
-  el.inspCenter.textContent = `(${centerX.toFixed(1)}, ${centerY.toFixed(1)})`;
-  el.inspDisplay.textContent = `(${displayX}, ${displayY})`;
-  el.inspSupport.textContent = denseState.metadata.sentinel_native_10m
-    ? '8x8 px (80x80 m nominal)'
-    : '8x8 px (Espaço de pixel)';
+  if (el.inspGrid) el.inspGrid.textContent = `(${gx}, ${gy})`;
+  if (el.inspOrigin) el.inspOrigin.textContent = `(${originX}, ${originY})`;
+  if (el.inspCenter) el.inspCenter.textContent = `(${centerX.toFixed(1)}, ${centerY.toFixed(1)})`;
+  if (el.inspDisplay) el.inspDisplay.textContent = `(${displayX}, ${displayY})`;
+  if (el.inspSupport) {
+    el.inspSupport.textContent = (denseState.metadata && (denseState.metadata.sentinel_nominal_10m || denseState.metadata.sentinel_native_10m))
+      ? '8x8 px (80x80 m nominal)'
+      : '8x8 px (Espaço de pixel)';
+  }
 
   const isUncertain = decision.status === 'UNCERTAIN';
-  el.inspStatus.textContent = decision.status;
-  el.inspStatus.className = 'badge ' + (isUncertain ? 'badge-uncertain' : 'badge-classified');
+  if (el.inspStatus) {
+    el.inspStatus.textContent = decision.status;
+    el.inspStatus.className = 'badge ' + (isUncertain ? 'badge-uncertain' : 'badge-classified');
+  }
 
-  el.inspTop1Class.textContent = decision.predicted_class;
-  el.inspTop1Prob.textContent = `${(parseFloat(decision.probability) * 100).toFixed(2)}%`;
-  el.inspTop2Class.textContent = decision.second_class || '-';
-  el.inspTop2Prob.textContent = decision.second_probability
-    ? `${(parseFloat(decision.second_probability) * 100).toFixed(2)}%`
-    : '-';
-  el.inspMargin.textContent = decision.margin
-    ? `${(parseFloat(decision.margin) * 100).toFixed(2)}%`
-    : '-';
+  if (el.inspTop1Class) el.inspTop1Class.textContent = decision.predicted_class;
+  if (el.inspTop1Prob) el.inspTop1Prob.textContent = `${(parseFloat(decision.probability) * 100).toFixed(2)}%`;
+  if (el.inspTop2Class) el.inspTop2Class.textContent = decision.second_class || '-';
+  if (el.inspTop2Prob) {
+    el.inspTop2Prob.textContent = decision.second_probability
+      ? `${(parseFloat(decision.second_probability) * 100).toFixed(2)}%`
+      : '-';
+  }
+  if (el.inspMargin) {
+    el.inspMargin.textContent = decision.margin
+      ? `${(parseFloat(decision.margin) * 100).toFixed(2)}%`
+      : '-';
+  }
 
   // Position crosshair
   if (el.denseCrosshair && e) {
@@ -1117,18 +1158,23 @@ async function inspectPoint(e, isClick = false) {
   const clickY = Math.floor((e.clientY - rect.top) * scaleY);
 
   const stride = denseState.metadata.stride || 1;
-  const w = denseState.metadata.source_width || canvas.width;
-  const h = denseState.metadata.source_height || canvas.height;
+  const w = denseState.metadata.source_width || (denseState.sourceImg ? denseState.sourceImg.width : canvas.width);
+  const h = denseState.metadata.source_height || (denseState.sourceImg ? denseState.sourceImg.height : canvas.height);
+  const nx = denseState.metadata.grid_width || (Math.floor((w - 8) / stride) + 1);
+  const ny = denseState.metadata.grid_height || (Math.floor((h - 8) / stride) + 1);
 
-  // Grid origins
-  const originX = Math.floor(clickX / stride) * stride;
-  const originY = Math.floor(clickY / stride) * stride;
-
-  const nx = Math.floor((w - 8) / stride) + 1;
-  const ny = Math.floor((h - 8) / stride) + 1;
-
-  const gx = Math.floor(originX / stride);
-  const gy = Math.floor(originY / stride);
+  let gx, gy, originX, originY;
+  if (denseState.currentMode === 'class_map' || denseState.currentMode === 'confidence' || denseState.currentMode === 'margin') {
+    gx = clickX;
+    gy = clickY;
+    originX = gx * stride;
+    originY = gy * stride;
+  } else {
+    originX = Math.floor(clickX / stride) * stride;
+    originY = Math.floor(clickY / stride) * stride;
+    gx = Math.floor(originX / stride);
+    gy = Math.floor(originY / stride);
+  }
 
   if (gx < 0 || gx >= nx || gy < 0 || gy >= ny) return;
 
@@ -1139,7 +1185,7 @@ async function inspectPoint(e, isClick = false) {
 
   const cacheKey = `${originX}_${originY}`;
   if (denseState.inspectCache[cacheKey]) {
-    updateInspectorUI(denseState.inspectCache[cacheKey], originX, originY, centerX, centerY, displayX, displayY, e);
+    updateInspectorUI(denseState.inspectCache[cacheKey], originX, originY, centerX, centerY, displayX, displayY, gx, gy, e);
     return;
   }
 
@@ -1152,7 +1198,7 @@ async function inspectPoint(e, isClick = false) {
       const data = await res.json();
       if (data.success && data.decision) {
         denseState.inspectCache[cacheKey] = data.decision;
-        updateInspectorUI(data.decision, originX, originY, centerX, centerY, displayX, displayY, e);
+        updateInspectorUI(data.decision, originX, originY, centerX, centerY, displayX, displayY, gx, gy, e);
       }
     } catch (err) {
       console.warn('Inspect fetch failed', err);

@@ -12,14 +12,14 @@ can now train and apply the same tiny MLP to labeled PNG/JPEG patches.
 | TV-00 | Explicit RGB learning core | PASS |
 | TV-01A | Generalization observatory | PASS — validation failure observed |
 | TV-01B | Spatial-coverage intervention | STRONG SUPPORT |
-| TV-01C | Sealed synthetic TEST | NOT EXECUTED |
-| TV-APP-00 | Real RGB application pipeline | READY — natural-image probe not executed |
+| TV-01C | Sealed synthetic TEST | NOT EXECUTED / SEALED |
+| TV-APP-00 | Real RGB application pipeline | READY — natural-image probe not evaluated |
 | Application CLI | Canonical v0.1 CLI interface | READY |
 | Local Web GUI | Dataset authoring, patch extraction & UI workflow | READY |
-| ROI-level split | Spatial split independence (1 ROI = 1 Split) | READY |
+| Split Integrity | ROI-level split integrity & backend spatial disjointness validation | READY |
 | Dense patch classification | C++ sliding-window spatial map engine | READY |
-| Uncertainty map | Top-1/top-2 margin thresholding | READY |
-| Sentinel native-pixel mode | 1px=10m native scale tagging (80x80m context) | READY |
+| Uncertainty & Margin | Top-1 probability and top-1/top-2 margin thresholding | READY |
+| Sentinel nominal resolution | 1px=10m nominal scale tagging (80x80m support) | READY |
 | H3 integration | Geospatial indexing preparation | PLANNED / NOT IMPLEMENTED |
 
 ## Quick start
@@ -33,12 +33,12 @@ Launch the self-contained local web interface at `127.0.0.1`:
 ```
 
 The interactive workflow guides you through:
-1. **Abrir Imagem**: Carregue PNG/JPEG local (com indicação se a fonte possui pixels Sentinel-2 nativos de 10 m ou imagem de exibição);
-2. **Definir Classes**: Crie classes rotuladas com cores personalizadas (ou use o preset Sentinel);
-3. **Marcar Regiões (ROIs)**: Desenhe áreas de interesse no canvas e atribua splits (`TRAIN`, `DEV`, `PROBE`) respeitando a independência espacial estrita (**1 ROI = 1 Split**);
+1. **Abrir Imagem**: Carregue PNG/JPEG local (com indicação se a fonte possui pixels Sentinel-2 nominais de 10 m ou imagem de exibição);
+2. **Definir Classes**: Crie classes rotuladas com paleta unificada e canônica;
+3. **Marcar Regiões (ROIs)**: Desenhe áreas de interesse no canvas e atribua splits (`TRAIN`, `DEV`, `PROBE`) respeitando a integridade de splits por ROI (**1 ROI = 1 Split** e disjunção espacial entre splits validada no backend);
 4. **Gerar Patches 8x8**: Extraia patches exatos de 8x8 pixels sem interpolação com manifesto de proveniência (`manifest.csv` e `dataset.json`);
 5. **Treinar**: Execute o treinamento canônico C++ (`./bin/tinyvision train`) com métricas em tempo real;
-6. **Classificar Imagem em Grade (Mapa Denso)**: Execute a classificação espacial densa em C++ (`./bin/tinyvision map`) com visualização de classes, incerteza, overlay e inspeção espacial interativa;
+6. **Classificar Imagem em Grade (Mapa Denso)**: Execute a classificação espacial densa em C++ (`./bin/tinyvision map`) com visualização de classes no espaço da grade, probabilidade top-1, margem top-1 − top-2, overlay canônico C++ e inspeção espacial interativa;
 7. **Classificar & Avaliar**: Classifique novas imagens 8x8 e avalie splits mantendo o `PROBE` isolado.
 
 ### 2. Linha de Comando (CLI)
@@ -73,15 +73,25 @@ cmake --build build
 
 ### 3. Conceito da Classificação Espacial Densa
 
-- **Janela (Window)**: $8 \times 8$ pixels ($192$ entradas RGB).
-- **Suporte/Contexto Contextual**: $80 \times 80\text{ m}$ nominais quando a fonte é pixel nativo Sentinel-2 ($10\text{ m/px}$).
-- **Espaçamento (Stride)**: Espaçamento entre decisões consecutivas (não altera o tamanho do suporte $8 \times 8$).
-  - Stride 1: decisão a cada $10\text{ m}$ (a cada pixel) usando contexto de $80\text{ m}$.
-  - Stride 2: decisão a cada $20\text{ m}$.
-  - Stride 4: decisão a cada $40\text{ m}$.
-  - Stride 8: decisão a cada $80\text{ m}$ (blocos disjuntos).
-- **Centro Geométrico**: Para uma janela par $8 \times 8$, o centro geométrico exato é $(x + 3.5, y + 3.5)$. A âncora visual inteira de exibição é $(x + 4, y + 4)$.
-- **Incerteza**: Calculada a partir da margem entre as probabilidades top-1 e top-2 ($\text{margin} = p_1 - p_2$). Se $p_1 < \text{confidence\_threshold}$ ou $\text{margin} < \text{margin\_threshold}$, a decisão é marcada como `UNCERTAIN`.
+- **Suporte Contextual (Support Window)**: $8 \times 8$ pixels ($192$ entradas RGB scanline $[x, x+7] \times [y, y+7]$ extraídas sem interpolação).
+- **Escala Nominal Sentinel**: $80 \times 80\text{ m}$ nominais quando a fonte é pixel nativo Sentinel-2 ($10\text{ m/px}$).
+- **Espaçamento (Stride)**: Espaçamento entre decisões consecutivas na grade discreta (não altera o tamanho do suporte $8 \times 8$).
+  - Stride 1: decisão a cada pixel usando suporte de $8 \times 8$.
+  - Stride 2: decisão a cada 2 pixels.
+  - Stride 4: decisão a cada 4 pixels.
+  - Stride 8: decisão a cada 8 pixels (suportes disjuntos).
+- **Semântica Espacial**:
+  - `origin_x, origin_y`: Origem da janela na imagem fonte.
+  - `center_x, center_y`: Centro geométrico exato $(x + 3.5, y + 3.5)$.
+  - `grid_x, grid_y`: Coordenadas na grade discreta de decisões ($N_x \times N_y$).
+  - `display_x, display_y`: Âncora visual inteira de exibição $(x + 4, y + 4)$.
+  - *Regra fundamental*: $\text{SUPPORT} \neq \text{DECISION POINT} \neq \text{DISPLAY CELL}$.
+- **Geometria dos Artefatos**:
+  - `class_map.png`, `confidence.png` (Probabilidade Top-1) e `margin.png` (Margem Top-1 − Top-2) são rasters no **GRID SPACE** ($N_x \times N_y$), onde cada pixel é uma decisão.
+  - `overlay.png` é gerado pelo engine C++ como **autoridade única canônica** no espaço da imagem fonte ($W \times H$), projetando cada decisão em sua célula de espaçamento de stride.
+- **Interpretação de Incerteza**:
+  - $p_1 = \text{top-1 probability}$, $p_2 = \text{top-2 probability}$, $\text{margin} = p_1 - p_2$.
+  - Status `UNCERTAIN` significa `UNCERTAIN_BY_CONFIGURED_THRESHOLD` ($p_1 < \text{confidence\_threshold}$ ou $\text{margin} < \text{margin\_threshold}$), sem alegar calibração probabilística ou incerteza epistemológica.
 
 ### 4. Papel Futuro do H3 (Preparação Arquitetural)
 
@@ -103,8 +113,8 @@ After cloning, run the complete project and synthetic baseline verification with
 # or: ./scripts/verify.sh
 ```
 
-The command configures and builds the Release/Ninja tree, runs all seven test suites
-(including the CLI and Web test suites), and checks the TV-00, TV-01A, TV-01B, and TV-APP-00
+The command configures and builds the Release/Ninja tree, runs all 8 test suites
+(including the CLI, dense spatial classification, and Web test suites), and checks the TV-00, TV-01A, TV-01B, and TV-APP-00
 engineering witnesses. It does not evaluate synthetic TEST or a natural-image application probe.
 
 

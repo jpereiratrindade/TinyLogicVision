@@ -127,24 +127,40 @@ std::string compute_file_sha256(const std::filesystem::path& file_path) {
     return sha256_final(ctx);
 }
 
-std::array<std::uint8_t, 3> get_class_color(std::size_t class_index, bool is_uncertain) {
+std::array<std::uint8_t, 3> get_decision_color(const PaletteConfig& palette,
+                                               std::size_t class_index,
+                                               bool is_uncertain) {
     if (is_uncertain) {
-        return {100, 116, 139}; // neutral slate gray (#64748b)
+        return palette.uncertain.rgb;
     }
-    static const std::vector<std::array<std::uint8_t, 3>> palette = {
-        {34, 197, 94},   // emerald (#22c55e)
-        {234, 179, 8},   // amber (#eab308)
-        {249, 115, 22},  // orange (#f97316)
-        {59, 130, 246},  // blue (#3b82f6)
-        {168, 85, 247},  // purple (#a855f7)
-        {236, 72, 153},  // pink (#ec4899)
-        {20, 184, 166},  // teal (#14b8a6)
-        {239, 68, 68},   // red (#ef4444)
-    };
-    return palette[class_index % palette.size()];
+    if (class_index < palette.classes.size()) {
+        return palette.classes[class_index].rgb;
+    }
+    return {128, 128, 128};
 }
 
 } // namespace
+
+PaletteConfig get_canonical_palette(const std::vector<std::string>& class_names) {
+    static const std::vector<std::pair<std::string, std::array<std::uint8_t, 3>>> palette_colors = {
+        {"#22c55e", {34, 197, 94}},   // emerald
+        {"#eab308", {234, 179, 8}},   // amber
+        {"#f97316", {249, 115, 22}},  // orange
+        {"#3b82f6", {59, 130, 246}},  // blue
+        {"#a855f7", {168, 85, 247}},  // purple
+        {"#ec4899", {236, 72, 153}},  // pink
+        {"#14b8a6", {20, 184, 166}},  // teal
+        {"#ef4444", {239, 68, 68}},   // red
+    };
+
+    PaletteConfig config;
+    for (std::size_t i = 0; i < class_names.size(); ++i) {
+        const auto& [hex, rgb] = palette_colors[i % palette_colors.size()];
+        config.classes.push_back({class_names[i], i, hex, rgb});
+    }
+    config.uncertain = {"UNCERTAIN", 9999, "#808080", {128, 128, 128}};
+    return config;
+}
 
 DenseMapResult classify_dense(const ApplicationModel& model,
                               const RgbImage& image,
@@ -170,6 +186,7 @@ DenseMapResult classify_dense(const ApplicationModel& model,
     result.grid_height = grid_height;
     result.total_decisions = total_decisions;
     result.config = config;
+    result.palette = get_canonical_palette(model.class_names);
     result.decisions.resize(total_decisions);
 
     std::vector<double> window(192);
@@ -180,7 +197,7 @@ DenseMapResult classify_dense(const ApplicationModel& model,
         for (std::size_t gx = 0; gx < grid_width; ++gx) {
             const std::size_t x = gx * config.stride;
 
-            // Extract exact 8x8 patch without interpolation
+            // Extract exact 8x8 patch in RGB scanline order without interpolation
             for (std::size_t wy = 0; wy < 8; ++wy) {
                 const std::size_t src_row = ((y + wy) * image.width + x) * 3;
                 const std::size_t dst_row = (wy * 8) * 3;
@@ -215,14 +232,14 @@ DenseMapResult classify_dense(const ApplicationModel& model,
                                       (margin < config.margin_threshold);
 
             auto& d = result.decisions[decision_index++];
+            d.grid_x = gx;
+            d.grid_y = gy;
             d.origin_x = x;
             d.origin_y = y;
             d.center_x = static_cast<double>(x) + 3.5;
             d.center_y = static_cast<double>(y) + 3.5;
             d.display_x = x + 4;
             d.display_y = y + 4;
-            d.grid_x = gx;
-            d.grid_y = gy;
             d.predicted_index = top1_idx;
             d.predicted_class = model.class_names[top1_idx];
             d.probability = top1_prob;
@@ -258,9 +275,10 @@ void export_dense_map(const DenseMapResult& result,
     if (!csv) {
         throw std::runtime_error("failed to open " + csv_path.string() + " for writing");
     }
-    csv << "origin_x,origin_y,center_x,center_y,display_x,display_y,predicted_class,probability,second_class,second_probability,margin,status\n";
+    csv << "grid_x,grid_y,origin_x,origin_y,center_x,center_y,display_x,display_y,predicted_class,probability,second_class,second_probability,margin,status\n";
     for (const auto& d : result.decisions) {
-        csv << d.origin_x << ',' << d.origin_y << ','
+        csv << d.grid_x << ',' << d.grid_y << ','
+            << d.origin_x << ',' << d.origin_y << ','
             << std::fixed << std::setprecision(1) << d.center_x << ',' << d.center_y << ','
             << d.display_x << ',' << d.display_y << ','
             << d.predicted_class << ','
@@ -316,6 +334,18 @@ void export_dense_map(const DenseMapResult& result,
         js << "\"" << model.class_names[i] << "\"" << (i + 1 < model.class_names.size() ? ", " : "");
     }
     js << "],\n"
+       << "  \"spatial_semantics\": {\n"
+       << "    \"support\": \"8x8 pixels [origin_x, origin_x+7] x [origin_y, origin_y+7]\",\n"
+       << "    \"center_geometry\": \"Exact geometric center (origin_x + 3.5, origin_y + 3.5)\",\n"
+       << "    \"display_anchor\": \"Integer visualization anchor (origin_x + 4, origin_y + 4)\",\n"
+       << "    \"grid_coordinates\": \"Decision index in dense raster [0..grid_width-1] x [0..grid_height-1]\",\n"
+       << "    \"concept_distinction\": \"SUPPORT != DECISION POINT != DISPLAY CELL\"\n"
+       << "  },\n"
+       << "  \"uncertainty_semantics\": {\n"
+       << "    \"top1_probability\": \"Top-1 uncalibrated softmax probability\",\n"
+       << "    \"margin\": \"Top-1 minus Top-2 softmax probability\",\n"
+       << "    \"status_definition\": \"UNCERTAIN when top1 < confidence_threshold OR margin < margin_threshold (UNCERTAIN_BY_CONFIGURED_THRESHOLD)\"\n"
+       << "  },\n"
        << "  \"confidence_threshold\": " << std::fixed << std::setprecision(4) << result.config.confidence_threshold << ",\n"
        << "  \"margin_threshold\": " << result.config.margin_threshold << ",\n"
        << "  \"sentinel_native_10m\": " << (result.config.sentinel_native_10m ? "true" : "false") << ",\n";
@@ -326,7 +356,22 @@ void export_dense_map(const DenseMapResult& result,
         js << "  \"nominal_context_m\": null,\n"
            << "  \"nominal_decision_spacing_m\": null,\n";
     }
-    js << "  \"geospatial\": {\n"
+    js << "  \"palette\": {\n"
+       << "    \"classes\": [\n";
+    for (std::size_t i = 0; i < result.palette.classes.size(); ++i) {
+        const auto& c = result.palette.classes[i];
+        js << "      {\"name\": \"" << c.name << "\", \"index\": " << c.index
+           << ", \"color\": \"" << c.hex_color << "\", \"rgb\": ["
+           << static_cast<int>(c.rgb[0]) << ", " << static_cast<int>(c.rgb[1]) << ", " << static_cast<int>(c.rgb[2]) << "]}"
+           << (i + 1 < result.palette.classes.size() ? ",\n" : "\n");
+    }
+    js << "    ],\n"
+       << "    \"uncertain\": {\"name\": \"" << result.palette.uncertain.name << "\", \"color\": \"" << result.palette.uncertain.hex_color
+       << "\", \"rgb\": [" << static_cast<int>(result.palette.uncertain.rgb[0]) << ", "
+       << static_cast<int>(result.palette.uncertain.rgb[1]) << ", "
+       << static_cast<int>(result.palette.uncertain.rgb[2]) << "]}\n"
+       << "  },\n"
+       << "  \"geospatial\": {\n"
        << "    \"available\": false,\n"
        << "    \"crs\": null,\n"
        << "    \"transform\": null,\n"
@@ -345,14 +390,14 @@ void export_dense_map(const DenseMapResult& result,
        << "  }\n"
        << "}\n";
 
-    // 3. Export class_map.png
+    // 3. Export class_map.png (GRID SPACE: grid_width x grid_height)
     RgbImage class_map;
     class_map.width = result.grid_width;
     class_map.height = result.grid_height;
     class_map.pixels.resize(result.grid_width * result.grid_height * 3);
 
     for (const auto& d : result.decisions) {
-        const auto color = get_class_color(d.predicted_index, d.is_uncertain);
+        const auto color = get_decision_color(result.palette, d.predicted_index, d.is_uncertain);
         const std::size_t idx = (d.grid_y * result.grid_width + d.grid_x) * 3;
         class_map.pixels[idx + 0] = color[0];
         class_map.pixels[idx + 1] = color[1];
@@ -360,7 +405,7 @@ void export_dense_map(const DenseMapResult& result,
     }
     save_png_image(output_dir / "class_map.png", class_map);
 
-    // 4. Export confidence.png
+    // 4. Export confidence.png (GRID SPACE: Top-1 Probability map)
     RgbImage conf_map;
     conf_map.width = result.grid_width;
     conf_map.height = result.grid_height;
@@ -375,10 +420,26 @@ void export_dense_map(const DenseMapResult& result,
     }
     save_png_image(output_dir / "confidence.png", conf_map);
 
-    // 5. Export overlay.png
+    // 5. Export margin.png (GRID SPACE: Top-1 minus Top-2 Margin map)
+    RgbImage margin_map;
+    margin_map.width = result.grid_width;
+    margin_map.height = result.grid_height;
+    margin_map.pixels.resize(result.grid_width * result.grid_height * 3);
+
+    for (const auto& d : result.decisions) {
+        const auto val = static_cast<std::uint8_t>(std::clamp(d.margin * 255.0, 0.0, 255.0));
+        const std::size_t idx = (d.grid_y * result.grid_width + d.grid_x) * 3;
+        margin_map.pixels[idx + 0] = val;
+        margin_map.pixels[idx + 1] = val;
+        margin_map.pixels[idx + 2] = val;
+    }
+    save_png_image(output_dir / "margin.png", margin_map);
+
+    // 6. Export overlay.png (SOURCE IMAGE SPACE: width x height, single authoritative C++ projection)
     RgbImage overlay = source_image;
     for (const auto& d : result.decisions) {
-        const auto color = get_class_color(d.predicted_index, d.is_uncertain);
+        const auto color = get_decision_color(result.palette, d.predicted_index, d.is_uncertain);
+        // Project decision onto its decision-spacing cell: [origin, origin + stride - 1]
         for (std::size_t dy = 0; dy < result.config.stride; ++dy) {
             const std::size_t py = d.origin_y + dy;
             if (py >= source_image.height) continue;

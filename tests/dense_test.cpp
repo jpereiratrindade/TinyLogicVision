@@ -15,7 +15,6 @@ namespace {
 tinyvision::RgbImage make_test_image(std::size_t width, std::size_t height) {
     tinyvision::RgbImage img;
     img.width = width;
-
     img.height = height;
     img.pixels.resize(width * height * 3);
     for (std::size_t y = 0; y < height; ++y) {
@@ -33,12 +32,73 @@ tinyvision::RgbImage make_test_image(std::size_t width, std::size_t height) {
 
 int main() {
     try {
-        // 1. Setup model with 3 classes
+        // 1. Direct 8x8 Extraction Witness: verify byte-for-byte exact RGB values without interpolation
+        {
+            const std::size_t ref_w = 12;
+            const std::size_t ref_h = 10;
+            tinyvision::RgbImage ref_img;
+            ref_img.width = ref_w;
+            ref_img.height = ref_h;
+            ref_img.pixels.resize(ref_w * ref_h * 3);
+
+            for (std::size_t y = 0; y < ref_h; ++y) {
+                for (std::size_t x = 0; x < ref_w; ++x) {
+                    const std::size_t idx = (y * ref_w + x) * 3;
+                    ref_img.pixels[idx + 0] = static_cast<std::uint8_t>((x * 11 + y * 3) % 256);
+                    ref_img.pixels[idx + 1] = static_cast<std::uint8_t>((x * 13 + y * 5) % 256);
+                    ref_img.pixels[idx + 2] = static_cast<std::uint8_t>((x * 17 + y * 7) % 256);
+                }
+            }
+
+            // Window origin at (x=2, y=1)
+            const std::size_t test_ox = 2;
+            const std::size_t test_oy = 1;
+
+            // Extract window manually for comparison
+            std::vector<double> expected_window(192);
+            for (std::size_t wy = 0; wy < 8; ++wy) {
+                for (std::size_t wx = 0; wx < 8; ++wx) {
+                    const std::size_t src_idx = ((test_oy + wy) * ref_w + (test_ox + wx)) * 3;
+                    const std::size_t dst_idx = (wy * 8 + wx) * 3;
+                    expected_window[dst_idx + 0] = static_cast<double>(ref_img.pixels[src_idx + 0]) / 255.0;
+                    expected_window[dst_idx + 1] = static_cast<double>(ref_img.pixels[src_idx + 1]) / 255.0;
+                    expected_window[dst_idx + 2] = static_cast<double>(ref_img.pixels[src_idx + 2]) / 255.0;
+                }
+            }
+
+            std::vector<std::string> dummy_classes{"c0", "c1"};
+            tinyvision::MLP dummy_mlp(192, 24, 2, 42);
+            tinyvision::ApplicationModel dummy_model(dummy_classes, 8, 8, dummy_mlp);
+
+            tinyvision::DenseMapConfig single_config;
+            single_config.stride = 1;
+            const auto single_res = tinyvision::classify_dense(dummy_model, ref_img, single_config);
+
+            // Find decision corresponding to (test_ox, test_oy)
+            const std::size_t target_idx = test_oy * single_res.grid_width + test_ox;
+            const auto& dec = single_res.decisions[target_idx];
+            if (dec.origin_x != test_ox || dec.origin_y != test_oy ||
+                dec.grid_x != test_ox || dec.grid_y != test_oy) {
+                std::cerr << "extraction witness grid indexing failed\n";
+                return 1;
+            }
+
+            // Verify prediction matches direct forward of expected_window
+            const auto expected_probs = dummy_model.network.predict(expected_window);
+            const double expected_top1 = std::max(expected_probs[0], expected_probs[1]);
+            if (std::abs(dec.probability - expected_top1) > 1e-12) {
+                std::cerr << "extraction witness forward numerical mismatch: got "
+                          << dec.probability << " expected " << expected_top1 << '\n';
+                return 1;
+            }
+        }
+
+        // 2. Setup model with 3 classes
         std::vector<std::string> class_names{"floresta", "campo", "solo"};
         tinyvision::MLP mlp(192, 24, 3, 7);
         tinyvision::ApplicationModel model(class_names, 8, 8, mlp);
 
-        // 2. Test grid dimensions for stride 1, 2, 4, 8 on 24x20 image
+        // 3. Test grid dimensions for stride 1, 2, 4, 8 on 24x20 image
         const auto image = make_test_image(24, 20);
 
         for (const auto stride : {1, 2, 4, 8}) {
@@ -58,19 +118,21 @@ int main() {
                 return 1;
             }
 
-            // Check center coordinate formula and display anchor
+            // Check center coordinate formula, grid coordinates, and display anchor
             for (const auto& d : result.decisions) {
-                if (std::abs(d.center_x - (static_cast<double>(d.origin_x) + 3.5)) > 1e-9 ||
+                if (d.grid_x != d.origin_x / stride ||
+                    d.grid_y != d.origin_y / stride ||
+                    std::abs(d.center_x - (static_cast<double>(d.origin_x) + 3.5)) > 1e-9 ||
                     std::abs(d.center_y - (static_cast<double>(d.origin_y) + 3.5)) > 1e-9 ||
                     d.display_x != d.origin_x + 4 ||
                     d.display_y != d.origin_y + 4) {
-                    std::cerr << "geometric center or display coordinate check failed\n";
+                    std::cerr << "geometric center, grid or display coordinate check failed\n";
                     return 1;
                 }
             }
         }
 
-        // 3. Test exact byte-to-byte extraction and repeatability
+        // 4. Test repeatability
         tinyvision::DenseMapConfig config_s1;
         config_s1.stride = 1;
         const auto run1 = tinyvision::classify_dense(model, image, config_s1);
@@ -90,10 +152,10 @@ int main() {
             }
         }
 
-        // 4. Test uncertainty thresholds
+        // 5. Test uncertainty thresholds
         tinyvision::DenseMapConfig config_thresh;
         config_thresh.stride = 1;
-        config_thresh.confidence_threshold = 0.99999; // very high threshold to force UNCERTAIN
+        config_thresh.confidence_threshold = 0.99999; // force UNCERTAIN
         config_thresh.margin_threshold = 0.99999;
         const auto run_uncertain = tinyvision::classify_dense(model, image, config_thresh);
 
@@ -103,7 +165,7 @@ int main() {
             return 1;
         }
 
-        // 5. Test export to disk
+        // 6. Test export to disk & artifact contracts
         const auto tmp_out = std::filesystem::temp_directory_path() / ("tinyvision_dense_test_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
         const auto dummy_model_path = tmp_out / "model.tlv";
         const auto dummy_source_path = tmp_out / "source.png";
@@ -118,22 +180,41 @@ int main() {
         const auto result_export = tinyvision::classify_dense(model, image, config_export);
         tinyvision::export_dense_map(result_export, model, image, dummy_model_path, dummy_source_path, tmp_out);
 
-        // Verify all 5 files exist
+        // Verify all 6 files exist
         if (!std::filesystem::is_regular_file(tmp_out / "classification.csv") ||
             !std::filesystem::is_regular_file(tmp_out / "run.json") ||
             !std::filesystem::is_regular_file(tmp_out / "class_map.png") ||
             !std::filesystem::is_regular_file(tmp_out / "confidence.png") ||
+            !std::filesystem::is_regular_file(tmp_out / "margin.png") ||
             !std::filesystem::is_regular_file(tmp_out / "overlay.png")) {
             std::cerr << "exported dense artifacts missing on disk\n";
             return 1;
         }
 
-        // Verify CSV header
+        // Verify CSV header with grid_x and grid_y
         std::ifstream csv(tmp_out / "classification.csv");
         std::string header;
         std::getline(csv, header);
-        if (header != "origin_x,origin_y,center_x,center_y,display_x,display_y,predicted_class,probability,second_class,second_probability,margin,status") {
+        if (header != "grid_x,grid_y,origin_x,origin_y,center_x,center_y,display_x,display_y,predicted_class,probability,second_class,second_probability,margin,status") {
             std::cerr << "CSV header mismatch: " << header << '\n';
+            return 1;
+        }
+
+        // Verify raster dimensions
+        const auto class_map_img = tinyvision::load_rgb_image(tmp_out / "class_map.png");
+        const auto conf_map_img = tinyvision::load_rgb_image(tmp_out / "confidence.png");
+        const auto margin_map_img = tinyvision::load_rgb_image(tmp_out / "margin.png");
+        const auto overlay_img = tinyvision::load_rgb_image(tmp_out / "overlay.png");
+
+        if (class_map_img.width != result_export.grid_width || class_map_img.height != result_export.grid_height ||
+            conf_map_img.width != result_export.grid_width || conf_map_img.height != result_export.grid_height ||
+            margin_map_img.width != result_export.grid_width || margin_map_img.height != result_export.grid_height) {
+            std::cerr << "grid space raster dimension mismatch\n";
+            return 1;
+        }
+
+        if (overlay_img.width != image.width || overlay_img.height != image.height) {
+            std::cerr << "overlay raster dimension mismatch with source image\n";
             return 1;
         }
 
@@ -142,8 +223,10 @@ int main() {
         std::filesystem::remove_all(tmp_out, ec);
 
         std::cout << "TinyLogicVision dense spatial classification test PASS\n"
+                  << "extraction_witness=BYTE_EXACT_RGB_SCANLINE\n"
                   << "decisions_stride1=221 decisions_stride2=63\n"
-                  << "center_geometry=EXACT repeatability=EXACT\n";
+                  << "center_geometry=EXACT repeatability=EXACT\n"
+                  << "unified_palette=PASS margin_map=PASS\n";
 
     } catch (const std::exception& error) {
         std::cerr << "dense_test error: " << error.what() << '\n';

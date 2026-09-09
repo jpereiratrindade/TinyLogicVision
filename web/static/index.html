@@ -330,20 +330,20 @@
         <div class="dense-sliders-row">
           <div class="slider-group">
             <div class="slider-label-row">
-              <label>Threshold de Confiança:</label>
+              <label>Limiar de Probabilidade Top-1:</label>
               <span id="dense-val-confidence" class="slider-val-badge">0.00</span>
             </div>
             <input type="range" id="dense-slider-confidence" min="0" max="1" step="0.05" value="0.00" class="input-range">
-            <small class="text-dim">top1_probability &lt; threshold → UNCERTAIN</small>
+            <small class="text-dim">top1_probability &lt; limiar → UNCERTAIN</small>
           </div>
 
           <div class="slider-group">
             <div class="slider-label-row">
-              <label>Threshold de Margem (Top1 - Top2):</label>
+              <label>Limiar de Margem (Top-1 − Top-2):</label>
               <span id="dense-val-margin" class="slider-val-badge">0.00</span>
             </div>
             <input type="range" id="dense-slider-margin" min="0" max="1" step="0.05" value="0.00" class="input-range">
-            <small class="text-dim">top1_prob - top2_prob &lt; margin → UNCERTAIN</small>
+            <small class="text-dim">top1_prob − top2_prob &lt; margem → UNCERTAIN</small>
           </div>
 
           <div class="sentinel-check-col">
@@ -372,26 +372,14 @@
         <div id="dense-results-panel" class="dense-results-box hidden">
           <div class="dense-viewer-header">
             <div class="dense-view-modes">
-              <button class="btn btn-sm btn-mode active" data-mode="overlay">Overlay (Sobreposto)</button>
-              <button class="btn btn-sm btn-mode" data-mode="class_map">Mapa de Classes</button>
-              <button class="btn btn-sm btn-mode" data-mode="confidence">Mapa de Confiança</button>
+              <button class="btn btn-sm btn-mode active" data-mode="overlay">Overlay (Canônico C++)</button>
+              <button class="btn btn-sm btn-mode" data-mode="class_map">Mapa de Classes (Grid)</button>
+              <button class="btn btn-sm btn-mode" data-mode="confidence">Probabilidade Top-1 (Grid)</button>
+              <button class="btn btn-sm btn-mode" data-mode="margin">Margem Top-1 − Top-2 (Grid)</button>
               <button class="btn btn-sm btn-mode" data-mode="source">Imagem Original</button>
             </div>
-
-            <div class="dense-viewer-tools">
-              <label class="checkbox-inline">
-                <input type="checkbox" id="dense-chk-overlay" checked>
-                <span>Overlay Ativo</span>
-              </label>
-              <div class="opacity-control">
-                <span>Opacidade:</span>
-                <input type="range" id="dense-slider-opacity" min="0" max="100" value="65" class="input-range-sm">
-                <span id="dense-opacity-val">65%</span>
-              </div>
-              <label class="checkbox-inline">
-                <input type="checkbox" id="dense-chk-show-uncertain" checked>
-                <span>Exibir Incerteza (UNCERTAIN)</span>
-              </label>
+            <div class="dense-viewer-note text-dim">
+              <small>Modos Grid exibem decisões no espaço discreto da grade ($N_x \times N_y$)</small>
             </div>
           </div>
 
@@ -408,6 +396,10 @@
               <div class="inspector-card">
                 <h4>🎯 Inspeção Espacial da Decisão</h4>
                 <div class="inspector-field-group">
+                  <div class="insp-row">
+                    <span class="insp-lbl">Posição na Grade (gx, gy):</span>
+                    <strong id="insp-grid" class="mono text-cyan">-</strong>
+                  </div>
                   <div class="insp-row">
                     <span class="insp-lbl">Origem Janela (x, y):</span>
                     <strong id="insp-origin" class="mono">-</strong>
@@ -432,23 +424,23 @@
                     <span id="insp-status" class="badge badge-classified">CLASSIFIED</span>
                   </div>
                   <div class="insp-row">
-                    <span class="insp-lbl">Classe Predita (Top 1):</span>
+                    <span class="insp-lbl">Classe Predita (Top-1):</span>
                     <strong id="insp-top1-class" class="text-emerald">-</strong>
                   </div>
                   <div class="insp-row">
-                    <span class="insp-lbl">Probabilidade Top 1:</span>
+                    <span class="insp-lbl">Probabilidade Top-1:</span>
                     <span id="insp-top1-prob" class="mono-bold">-</span>
                   </div>
                   <div class="insp-row">
-                    <span class="insp-lbl">Segunda Opção (Top 2):</span>
+                    <span class="insp-lbl">Segunda Opção (Top-2):</span>
                     <span id="insp-top2-class" class="text-dim">-</span>
                   </div>
                   <div class="insp-row">
-                    <span class="insp-lbl">Probabilidade Top 2:</span>
+                    <span class="insp-lbl">Probabilidade Top-2:</span>
                     <span id="insp-top2-prob" class="mono">-</span>
                   </div>
                   <div class="insp-row">
-                    <span class="insp-lbl">Margem (Top1 - Top2):</span>
+                    <span class="insp-lbl">Margem (Top-1 − Top-2):</span>
                     <span id="insp-margin" class="mono text-amber">-</span>
                   </div>
                 </div>
@@ -456,9 +448,9 @@
 
               <!-- Dynamic Legend Card -->
               <div class="legend-card">
-                <h4>🎨 Legenda de Classes</h4>
+                <h4>🎨 Legenda Canônica de Classes</h4>
                 <div id="dense-dynamic-legend" class="dynamic-legend-list">
-                  <!-- Dynamically populated classes -->
+                  <!-- Dynamically populated from metadata palette -->
                 </div>
                 <div class="legend-meta-summary">
                   <span id="dense-total-decisions" class="badge">0 decisões</span>
@@ -468,12 +460,14 @@
 
               <!-- Export Links -->
               <div class="export-links-card">
-                <h4>📁 Arquivos da Execução</h4>
+                <h4>📁 Artefatos Canônicos</h4>
                 <div class="export-links-list">
                   <a id="link-download-csv" href="#" target="_blank" class="btn btn-xs btn-outline">📥 classification.csv</a>
                   <a id="link-download-json" href="#" target="_blank" class="btn btn-xs btn-outline">📋 run.json</a>
                   <a id="link-download-overlay" href="#" target="_blank" class="btn btn-xs btn-outline">🖼️ overlay.png</a>
                   <a id="link-download-classmap" href="#" target="_blank" class="btn btn-xs btn-outline">🗺️ class_map.png</a>
+                  <a id="link-download-confidencemap" href="#" target="_blank" class="btn btn-xs btn-outline">📊 confidence.png (Top-1)</a>
+                  <a id="link-download-marginmap" href="#" target="_blank" class="btn btn-xs btn-outline">📈 margin.png (Margem)</a>
                 </div>
               </div>
             </div>

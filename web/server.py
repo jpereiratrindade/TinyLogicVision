@@ -341,18 +341,38 @@ class TinyVisionRequestHandler(http.server.BaseHTTPRequestHandler):
             import shutil
             shutil.rmtree(dataset_dir)
 
-        # Enforce scientific spatial split invariant: 1 ROI -> 1 Split
+        # Enforce ROI-level split integrity: 1 ROI -> 1 Split
         roi_to_split = {}
         for p in patches:
             roi_id = str(p.get("roi_id", "roi_0"))
             split_val = str(p.get("split", "train")).lower()
             if roi_id in roi_to_split and roi_to_split[roi_id] != split_val:
                 self.send_error_json(
-                    f"Violação de independência espacial: ROI '{roi_id}' possui patches distribuídos em múltiplos splits ('{roi_to_split[roi_id]}' e '{split_val}'). A regra científica exige 1 ROI = 1 Split.",
+                    f"Violação de integridade de split por ROI: ROI '{roi_id}' possui patches distribuídos em múltiplos splits ('{roi_to_split[roi_id]}' e '{split_val}'). A regra científica exige 1 ROI = 1 Split.",
                     400,
                 )
                 return
             roi_to_split[roi_id] = split_val
+
+        # Enforce spatial patch disjointness across different splits
+        for i in range(len(patches)):
+            p1 = patches[i]
+            s1 = str(p1.get("split", "train")).lower()
+            x1 = int(p1.get("x", 0))
+            y1 = int(p1.get("y", 0))
+            for j in range(i + 1, len(patches)):
+                p2 = patches[j]
+                s2 = str(p2.get("split", "train")).lower()
+                if s1 == s2:
+                    continue
+                x2 = int(p2.get("x", 0))
+                y2 = int(p2.get("y", 0))
+                if abs(x1 - x2) < 8 and abs(y1 - y2) < 8:
+                    self.send_error_json(
+                        f"Violação de integridade espacial: patch em split '{s1}' em ({x1}, {y1}) sobrepõe patch em split '{s2}' em ({x2}, {y2}). Patches pertencentes a splits diferentes não podem sobrepor espacialmente.",
+                        400,
+                    )
+                    return
 
         manifest_rows = []
         counts = {"train": {}, "dev": {}, "probe": {}}
@@ -783,6 +803,7 @@ class TinyVisionRequestHandler(http.server.BaseHTTPRequestHandler):
             "artifacts": {
                 "class_map": f"/api/runs/{run_id}/class_map.png",
                 "confidence": f"/api/runs/{run_id}/confidence.png",
+                "margin": f"/api/runs/{run_id}/margin.png",
                 "overlay": f"/api/runs/{run_id}/overlay.png",
                 "run_json": f"/api/runs/{run_id}/run.json",
                 "classification_csv": f"/api/runs/{run_id}/classification.csv",
@@ -794,6 +815,7 @@ class TinyVisionRequestHandler(http.server.BaseHTTPRequestHandler):
         allowed = {
             "class_map.png": "image/png",
             "confidence.png": "image/png",
+            "margin.png": "image/png",
             "overlay.png": "image/png",
             "run.json": "application/json",
             "classification.csv": "text/csv; charset=utf-8",

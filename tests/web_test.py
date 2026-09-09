@@ -159,10 +159,36 @@ def main():
             except urllib.error.HTTPError as e:
                 assert e.code == 400, f"Expected 400 for spatial split violation, got {e.code}"
                 err_body = json.loads(e.read().decode("utf-8"))
-                assert "independência espacial" in err_body["error"].lower() or "violação" in err_body["error"].lower()
+                assert "integridade de split" in err_body["error"].lower() or "violação" in err_body["error"].lower()
 
-            # 4B. Test Dataset Creation with Valid Patches & Strict ROI Splits
-            print("Testing 8x8 patch extraction and dataset authoring (1 ROI = 1 Split)...")
+            # 4B. Test Spatial Patch Overlap Rejection Across Splits
+            print("Testing spatial patch overlap rejection across splits...")
+            overlap_patches = [
+                {"roi_id": "roi_train_1", "class": "floresta", "split": "train", "x": 0, "y": 0},
+                {"roi_id": "roi_dev_1", "class": "floresta", "split": "dev", "x": 4, "y": 4},
+            ]
+            overlap_payload = json.dumps({
+                "dataset_name": "overlap_dataset",
+                "image_path": uploaded_path,
+                "is_sentinel_10m": True,
+                "patches": overlap_patches,
+            }).encode("utf-8")
+            overlap_req = urllib.request.Request(
+                f"{base_url}/api/datasets/create",
+                data=overlap_payload,
+                headers={"Content-Type": "application/json"},
+                method="POST"
+            )
+            try:
+                urllib.request.urlopen(overlap_req)
+                raise AssertionError("Spatially overlapping patches across splits were unexpectedly accepted!")
+            except urllib.error.HTTPError as e:
+                assert e.code == 400, f"Expected 400 for spatial patch overlap violation, got {e.code}"
+                err_body = json.loads(e.read().decode("utf-8"))
+                assert "sobreposição espacial" in err_body["error"].lower() or "violação" in err_body["error"].lower()
+
+            # 4C. Test Dataset Creation with Valid Disjoint Patches & Strict ROI Splits
+            print("Testing 8x8 patch extraction and dataset authoring (disjoint splits)...")
             dataset_name = f"test_ds_{int(time.time())}"
             patches = [
                 # Forest patches (distinct ROIs per split)
@@ -313,7 +339,7 @@ def main():
 
             # Verify artifact delivery via HTTP
             print("Verifying map artifacts delivery over HTTP...")
-            for art in ("class_map.png", "confidence.png", "overlay.png", "run.json", "classification.csv"):
+            for art in ("class_map.png", "confidence.png", "margin.png", "overlay.png", "run.json", "classification.csv"):
                 with urllib.request.urlopen(f"{base_url}/api/runs/{run_id}/{art}") as res:
                     assert res.status == 200
                     data = res.read()
@@ -326,10 +352,15 @@ def main():
                 insp_data = json.loads(res.read().decode("utf-8"))
                 assert insp_data["success"] is True
                 dec = insp_data["decision"]
+                assert dec["grid_x"] == "0"
+                assert dec["grid_y"] == "0"
                 assert dec["origin_x"] == "0"
                 assert dec["origin_y"] == "0"
                 assert dec["center_x"] == "3.5"
                 assert dec["center_y"] == "3.5"
+                assert dec["display_x"] == "4"
+                assert dec["display_y"] == "4"
+                assert "margin" in dec
                 assert dec["predicted_class"] in ("floresta", "campo", "solo")
 
             # Clean up test dataset, model and runs from .tinyvision
