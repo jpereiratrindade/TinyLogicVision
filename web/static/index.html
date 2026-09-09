@@ -79,15 +79,15 @@
               </label>
             </div>
 
-            <!-- Source Loading Mode Tabs (Shown dynamically for Sentinel-2 Multiband) -->
-            <div class="source-mode-tabs hidden" id="tab1-source-mode-tabs">
+            <!-- Source Loading Mode Tabs -->
+            <div class="source-mode-tabs" id="tab1-source-mode-tabs">
               <button type="button" class="tab1-src-btn active" data-src-mode="folder">📁 Pasta Sentinel (.SAFE)</button>
-              <button type="button" class="tab1-src-btn" data-src-mode="multiband">🎛️ 4 Bandas</button>
-              <button type="button" class="tab1-src-btn" data-src-mode="single">🖼️ Imagem Única</button>
+              <button type="button" class="tab1-src-btn" data-src-mode="multiband">🎛️ 4 Bandas (B2,B3,B4,B8)</button>
+              <button type="button" class="tab1-src-btn" data-src-mode="single">🖼️ Arquivo / Imagem Única</button>
             </div>
 
             <!-- Mode 1: Sentinel Folder / SAFE -->
-            <div id="src-mode-folder" class="src-mode-panel hidden">
+            <div id="src-mode-folder" class="src-mode-panel">
               <p class="help-text">Abra a pasta descompactada do produto Sentinel-2 (diretório <code>.SAFE</code> ou pasta <code>R10m</code> contendo as bandas 10m).</p>
               <div class="form-row">
                 <input type="file" id="s2-folder-input" webkitdirectory directory multiple hidden>
@@ -130,7 +130,7 @@
             </div>
 
             <!-- Mode 3: Single File -->
-            <div id="src-mode-single" class="src-mode-panel">
+            <div id="src-mode-single" class="src-mode-panel hidden">
               <!-- Upload Zone -->
               <div class="upload-zone" id="drop-zone">
                 <input type="file" id="image-file-input" accept="image/png,image/jpeg,image/jpg,image/tiff,.tif,.tiff,.jp2,.j2k,image/jp2" hidden>

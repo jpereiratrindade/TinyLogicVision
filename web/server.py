@@ -260,13 +260,16 @@ class TinyVisionRequestHandler(http.server.BaseHTTPRequestHandler):
         pass
 
     def send_json(self, data, status=200):
-        body = json.dumps(data, indent=2).encode("utf-8")
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
-        self.end_headers()
-        self.wfile.write(body)
+        try:
+            body = json.dumps(data, indent=2).encode("utf-8")
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
+            self.end_headers()
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+            pass
 
     def send_error_json(self, message, status=400):
         self.send_json({"success": False, "error": str(message)}, status=status)
@@ -341,15 +344,19 @@ class TinyVisionRequestHandler(http.server.BaseHTTPRequestHandler):
         if not file_path.is_file():
             self.send_error_json("File not found", 404)
             return
-        with open(file_path, "rb") as f:
-            content = f.read()
-        self.send_response(200)
-        self.send_header("Content-Type", content_type)
-        self.send_header("Content-Length", str(len(content)))
-        if download_filename:
-            self.send_header("Content-Disposition", f'attachment; filename="{download_filename}"')
-        self.end_headers()
-        self.wfile.write(content)
+        try:
+            with open(file_path, "rb") as f:
+                content = f.read()
+            self.send_response(200)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(content)))
+            self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
+            if download_filename:
+                self.send_header("Content-Disposition", f'attachment; filename="{download_filename}"')
+            self.end_headers()
+            self.wfile.write(content)
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+            pass
 
     def handle_api_status(self):
         uploads = []

@@ -220,34 +220,24 @@ function setupModalitySelection() {
   const panelMultiband = document.getElementById('src-mode-multiband');
   const panelSingle = document.getElementById('src-mode-single');
 
-  const updateSourcePanels = () => {
-    if (state.modality === 'SENTINEL2_MULTIBAND') {
-      if (tab1SourceTabs) {
-        tab1SourceTabs.classList.remove('hidden');
-        tab1SourceTabs.style.display = 'flex';
-      }
-      const activeBtn = tab1SourceTabs ? tab1SourceTabs.querySelector('.tab1-src-btn.active') : null;
-      const activeMode = activeBtn ? activeBtn.dataset.srcMode : 'folder';
-      if (panelFolder) {
-        if (activeMode === 'folder') { panelFolder.classList.remove('hidden'); panelFolder.style.display = 'flex'; }
-        else { panelFolder.classList.add('hidden'); panelFolder.style.display = 'none'; }
-      }
-      if (panelMultiband) {
-        if (activeMode === 'multiband') { panelMultiband.classList.remove('hidden'); panelMultiband.style.display = 'flex'; }
-        else { panelMultiband.classList.add('hidden'); panelMultiband.style.display = 'none'; }
-      }
-      if (panelSingle) {
-        if (activeMode === 'single') { panelSingle.classList.remove('hidden'); panelSingle.style.display = 'flex'; }
-        else { panelSingle.classList.add('hidden'); panelSingle.style.display = 'none'; }
-      }
-    } else {
-      if (tab1SourceTabs) {
-        tab1SourceTabs.classList.add('hidden');
-        tab1SourceTabs.style.display = 'none';
-      }
-      if (panelFolder) { panelFolder.classList.add('hidden'); panelFolder.style.display = 'none'; }
-      if (panelMultiband) { panelMultiband.classList.add('hidden'); panelMultiband.style.display = 'none'; }
-      if (panelSingle) { panelSingle.classList.remove('hidden'); panelSingle.style.display = 'flex'; }
+  const switchTab = (mode) => {
+    if (tab1SourceTabs) {
+      tab1SourceTabs.querySelectorAll('.tab1-src-btn').forEach((b) => {
+        if (b.dataset.srcMode === mode) b.classList.add('active');
+        else b.classList.remove('active');
+      });
+    }
+    if (panelFolder) {
+      if (mode === 'folder') { panelFolder.classList.remove('hidden'); panelFolder.style.display = 'flex'; }
+      else { panelFolder.classList.add('hidden'); panelFolder.style.display = 'none'; }
+    }
+    if (panelMultiband) {
+      if (mode === 'multiband') { panelMultiband.classList.remove('hidden'); panelMultiband.style.display = 'flex'; }
+      else { panelMultiband.classList.add('hidden'); panelMultiband.style.display = 'none'; }
+    }
+    if (panelSingle) {
+      if (mode === 'single') { panelSingle.classList.remove('hidden'); panelSingle.style.display = 'flex'; }
+      else { panelSingle.classList.add('hidden'); panelSingle.style.display = 'none'; }
     }
   };
 
@@ -262,17 +252,16 @@ function setupModalitySelection() {
         el.chkSentinel10m.checked = true;
         el.denseChkSentinel10m.checked = true;
         updateSentinelBadges();
+        switchTab('folder');
       } else {
         el.modalityRgbCard.classList.add('active');
         el.modalityS2Card.classList.remove('active');
         el.bandsSchemaBox.classList.add('hidden');
         el.metaSchemaModality.textContent = 'RGB (8x8x3)';
+        switchTab('single');
       }
-      updateSourcePanels();
     });
   });
-
-  updateSourcePanels();
 
   if (el.chkH3SplitPartition) {
     el.chkH3SplitPartition.addEventListener('change', (e) => {
@@ -375,6 +364,27 @@ function setupImageLoading() {
           }
         }
       });
+
+      const s2Radio = document.querySelector('input[name="input-modality"][value="SENTINEL2_MULTIBAND"]');
+      const rgbRadio = document.querySelector('input[name="input-modality"][value="RGB"]');
+      if (targetMode === 'folder' || targetMode === 'multiband') {
+        if (s2Radio) s2Radio.checked = true;
+        state.modality = 'SENTINEL2_MULTIBAND';
+        if (el.modalityS2Card) el.modalityS2Card.classList.add('active');
+        if (el.modalityRgbCard) el.modalityRgbCard.classList.remove('active');
+        if (el.bandsSchemaBox) el.bandsSchemaBox.classList.remove('hidden');
+        if (el.metaSchemaModality) el.metaSchemaModality.textContent = 'SENTINEL2_MULTIBAND (8x8x4)';
+        if (el.chkSentinel10m) el.chkSentinel10m.checked = true;
+        if (el.denseChkSentinel10m) el.denseChkSentinel10m.checked = true;
+        updateSentinelBadges();
+      } else if (targetMode === 'single') {
+        if (rgbRadio) rgbRadio.checked = true;
+        state.modality = 'RGB';
+        if (el.modalityRgbCard) el.modalityRgbCard.classList.add('active');
+        if (el.modalityS2Card) el.modalityS2Card.classList.remove('active');
+        if (el.bandsSchemaBox) el.bandsSchemaBox.classList.add('hidden');
+        if (el.metaSchemaModality) el.metaSchemaModality.textContent = 'RGB (8x8x3)';
+      }
     });
   });
 
