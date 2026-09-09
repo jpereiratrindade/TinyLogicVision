@@ -7,20 +7,25 @@ can now train and apply the same tiny MLP to labeled PNG/JPEG patches.
 
 ## Current status
 
-| Stage | Purpose | Status |
+| Stage / Capability | Purpose | Status |
 | --- | --- | --- |
 | TV-00 | Explicit RGB learning core | PASS |
 | TV-01A | Generalization observatory | PASS — validation failure observed |
 | TV-01B | Spatial-coverage intervention | STRONG SUPPORT |
 | TV-01C | Sealed synthetic TEST | NOT EXECUTED / SEALED |
 | TV-APP-00 | Real RGB application pipeline | READY — natural-image probe not evaluated |
-| Application CLI | Canonical v0.1 CLI interface | READY |
-| Local Web GUI | Dataset authoring, patch extraction & UI workflow | READY |
-| Split Integrity | ROI-level split integrity & backend spatial disjointness validation | READY |
-| Dense patch classification | C++ sliding-window spatial map engine | READY |
-| Uncertainty & Margin | Top-1 probability and top-1/top-2 margin thresholding | READY |
-| Sentinel nominal resolution | 1px=10m nominal scale tagging (80x80m support) | READY |
-| H3 integration | Geospatial indexing preparation | PLANNED / NOT IMPLEMENTED |
+| Core Performance (TV-PERF-00) | Reusable zero-heap MLP workspaces | READY |
+| Tiled Dense Engine (TV-PERF-01) | Tiled streaming inference & binary O(1) index | READY |
+| Input Schema (TV-MB-00) | Generic WxHxC schema & Model format v2 | READY |
+| Multichannel Tensor (TV-MB-01) | Generic raster tensor & .tvp dataset foundation | READY |
+| Geospatial Raster (TV-GEO-00) | Optional GDAL source & strict band alignment | READY WHEN BUILT |
+| Sentinel-2 10m (TV-S2-00) | Native B2/B3/B4/B8 10m modality (256 inputs) | READY |
+| Georeferenced Outputs (TV-GEO-01) | Dense GeoTIFF maps (class, confidence, margin) | READY WHEN BUILT |
+| Provenance & RIT (TV-EVIDENCE-00) | Directed evidence graph (JSON/JSONL lineage) | READY |
+| Geospatial H3 (TV-H3-00) | Hex discrete sampling, split partition & aggregation | READY WHEN BUILT |
+| Spectral Ablation (TV-SPEC-00) | Neutral channel masking protocol | PREPARED / NOT_EVALUATED |
+| Web Async Jobs | Background CLI workers with polling on 127.0.0.1 | READY |
+| Application CLI | Unified command line interface & benchmark | READY |
 
 ## Quick start
 

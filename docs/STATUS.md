@@ -5,24 +5,35 @@
 ```text
 experimental evidence          cd0a591 — TV-01B spatial-coverage result
 consolidated baseline          TV-READY-02 — dense RGB baseline frozen
-application surface           TV-APP-00 — RGB application pipeline implemented
-application CLI                v0.1 READY — canonical CLI entry point and test suite
-Local Web GUI                  READY — 127.0.0.1 browser application for dataset and dense classification
-Dataset authoring              READY — manifest.csv, dataset.json, and spatial ROI management
-ROI-level split integrity      READY — 1 ROI = 1 Split and backend spatial disjointness validation across splits
-Dense patch classification     READY — in-memory C++ sliding window classification engine
-Uncertainty & margin maps      READY — top-1 probability, top-1/top-2 margin, and threshold-based UNCERTAIN
-Single overlay authority       READY — C++ canonical overlay.png centered on decisions in source image space (W×H)
-Grid rasters geometry          READY — class_map.png, confidence.png, margin.png in grid space (Nx×Ny)
-Canonical palette authority    READY — single palette defined in C++ engine and registered in run.json
-Nominal resolution scale       READY — operator-declared nominal 10m/px scale (80x80m support)
+RGB application                READY — RGB application pipeline implemented & preserved
+Dense RGB                      READY — in-memory and tiled streaming dense spatial engine
+CPU/memory optimized path      READY — zero-heap allocation hot inference workspaces (std::span)
+Multichannel foundation        READY — N-channel tensor abstraction (UINT8, UINT16, FLOAT32, FLOAT64)
+Model v2                       READY — format with explicit InputSchema & ChannelSpec
+Model v1 compatibility         READY — legacy .tlv format load & byte-for-byte numerical reproducibility
+Sentinel B2/B3/B4/B8           READY — 10m 4-band Sentinel-2 modality (8x8x4 -> 256 inputs)
+GDAL GEO source                READY WHEN BUILT — windowed raster input abstraction (TINYVISION_WITH_GDAL)
+Geo dense outputs              READY WHEN BUILT — georeferenced GeoTIFF class, confidence, margin rasters
+Provenance/RIT graph           READY — temporal evidence lineage (provenance.json, evidence.jsonl)
+H3 integration                 READY WHEN BUILT — discrete hexagonal sampling, split partitioning & aggregation
+Web Job Execution              READY — local asynchronous worker execution on 127.0.0.1
+Application CLI                READY — unified command-line authority (train, classify, evaluate, map, benchmark, web, verify)
+Synthetic TEST                 SEALED / NOT_EVALUATED
+Sentinel scientific performance NOT_EVALUATED
+Spectral ablation result       NOT_EVALUATED
 NATURAL APP PROBE              EXPLORATORY / NOT CLAIM-BEARING
-SYNTHETIC TEST                 SEALED / NOT_EVALUATED
-MULTICHANNEL FOUNDATION        NOT_IMPLEMENTED
-GEOSPATIAL / GDAL              NOT_IMPLEMENTED
-H3 INTEGRATION                 NOT_IMPLEMENTED
-SPECTRAL ABLATION              NOT_EVALUATED
 ```
+
+## Architectural and Scientific Invariants
+
+- **H3 não é entrada do MLP**: H3 é uma camada geo-espacial para indexação, amostragem e agregação estatística; o MLP processa exclusivamente tensores de entrada $W \times H \times C$.
+- **H3 não substitui o raster**: O raster contínuo continua sendo a fonte primária de verdade dos pixels; H3 mapeia centros de decisões para hexágonos discretos.
+- **Preview RGB não é multiband tensor**: Visualizações RGB (ex: composição B4/B3/B2) são artefatos de visualização para o operador humano e jamais substituem os dados multiespectrais nativos enviados ao modelo.
+- **Geo metadata não é inferida por escala visual**: CRS, pixel size e geotransform são obtidos unicamente de metadados georreferenciados válidos (GeoTIFF/GDAL) ou marcados como desconhecidos.
+- **Band order é parte estrita do InputSchema**: A ordem e os nomes dos canais (ex: B2, B3, B4, B8) fazem parte da assinatura do modelo; discrepâncias de ordem ou quantidade de canais provocam rejeição determinística imediata.
+- **Normalização é parte do InputSchema**: Escalas e offsets são registrados de forma explícita e determinística; não há normalização implícita ou min/max dependente da imagem.
+- **Multichannel não invalida RGB**: Suportes multicanais operam como uma camada sobre o TinyLogicVision sem alterar ou descartar o pipeline RGB legado.
+- **Model v2 não invalida Model v1**: O carregador interpreta modelos v1 legados como RGB ($8 \times 8 \times 3$, `uint8_div_255`) com exata reprodução de saídas.
 
 ## Demonstrated
 
