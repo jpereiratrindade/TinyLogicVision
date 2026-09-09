@@ -215,6 +215,42 @@ function setupTabs() {
 // 2. Modality & Multichannel Setup
 function setupModalitySelection() {
   const radios = document.querySelectorAll('input[name="input-modality"]');
+  const tab1SourceTabs = document.getElementById('tab1-source-mode-tabs');
+  const panelFolder = document.getElementById('src-mode-folder');
+  const panelMultiband = document.getElementById('src-mode-multiband');
+  const panelSingle = document.getElementById('src-mode-single');
+
+  const updateSourcePanels = () => {
+    if (state.modality === 'SENTINEL2_MULTIBAND') {
+      if (tab1SourceTabs) {
+        tab1SourceTabs.classList.remove('hidden');
+        tab1SourceTabs.style.display = 'flex';
+      }
+      const activeBtn = tab1SourceTabs ? tab1SourceTabs.querySelector('.tab1-src-btn.active') : null;
+      const activeMode = activeBtn ? activeBtn.dataset.srcMode : 'folder';
+      if (panelFolder) {
+        if (activeMode === 'folder') { panelFolder.classList.remove('hidden'); panelFolder.style.display = 'flex'; }
+        else { panelFolder.classList.add('hidden'); panelFolder.style.display = 'none'; }
+      }
+      if (panelMultiband) {
+        if (activeMode === 'multiband') { panelMultiband.classList.remove('hidden'); panelMultiband.style.display = 'flex'; }
+        else { panelMultiband.classList.add('hidden'); panelMultiband.style.display = 'none'; }
+      }
+      if (panelSingle) {
+        if (activeMode === 'single') { panelSingle.classList.remove('hidden'); panelSingle.style.display = 'flex'; }
+        else { panelSingle.classList.add('hidden'); panelSingle.style.display = 'none'; }
+      }
+    } else {
+      if (tab1SourceTabs) {
+        tab1SourceTabs.classList.add('hidden');
+        tab1SourceTabs.style.display = 'none';
+      }
+      if (panelFolder) { panelFolder.classList.add('hidden'); panelFolder.style.display = 'none'; }
+      if (panelMultiband) { panelMultiband.classList.add('hidden'); panelMultiband.style.display = 'none'; }
+      if (panelSingle) { panelSingle.classList.remove('hidden'); panelSingle.style.display = 'flex'; }
+    }
+  };
+
   radios.forEach((r) => {
     r.addEventListener('change', (e) => {
       state.modality = e.target.value;
@@ -232,8 +268,11 @@ function setupModalitySelection() {
         el.bandsSchemaBox.classList.add('hidden');
         el.metaSchemaModality.textContent = 'RGB (8x8x3)';
       }
+      updateSourcePanels();
     });
   });
+
+  updateSourcePanels();
 
   if (el.chkH3SplitPartition) {
     el.chkH3SplitPartition.addEventListener('change', (e) => {

@@ -1366,33 +1366,40 @@ body {
 
 .radio-card {
   display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  padding: 10px 12px;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
   background: var(--bg-secondary);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-sm);
   cursor: pointer;
   transition: all 0.2s ease;
+  user-select: none;
 }
 
 .radio-card:hover {
-  border-color: var(--accent-primary);
+  border-color: rgba(59, 130, 246, 0.4);
+  background: rgba(30, 41, 59, 0.95);
 }
 
 .radio-card.active {
   background: rgba(59, 130, 246, 0.12);
   border-color: var(--accent-primary);
+  box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.3);
 }
 
 .radio-card input[type="radio"] {
-  margin-top: 3px;
+  accent-color: var(--accent-primary);
+  width: 16px;
+  height: 16px;
+  margin: 0;
   cursor: pointer;
 }
 
 .radio-card-content {
   display: flex;
   flex-direction: column;
+  gap: 2px;
 }
 
 .radio-title {
