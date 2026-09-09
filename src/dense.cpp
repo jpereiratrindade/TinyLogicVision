@@ -17,6 +17,11 @@
 #include <thread>
 #include <vector>
 
+#ifdef TINYVISION_WITH_GDAL
+#include <gdal_priv.h>
+#include <ogr_spatialref.h>
+#endif
+
 namespace tinyvision {
 namespace {
 
@@ -142,64 +147,81 @@ std::array<std::uint8_t, 3> get_decision_color(const PaletteConfig& palette,
     return {128, 128, 128};
 }
 
+enum class GeoRasterType { byte, float32 };
+
 void write_geotiff_raster(const std::filesystem::path& path,
                           const void* pixel_data,
                           std::size_t byte_count,
                           std::size_t width,
                           std::size_t height,
-                          std::uint16_t bits_per_sample,
+                          GeoRasterType raster_type,
                           const GeoMetadata& meta,
                           std::size_t stride) {
-    std::ofstream out(path, std::ios::binary | std::ios::trunc);
-    if (!out) return;
+#ifdef TINYVISION_WITH_GDAL
+    const std::size_t bytes_per_pixel = raster_type == GeoRasterType::byte ? 1 : sizeof(float);
+    if (width == 0 || height == 0 || byte_count != width * height * bytes_per_pixel) {
+        throw std::invalid_argument("invalid GeoTIFF raster buffer dimensions");
+    }
 
-    // Header: II (Little endian) + 42 + offset to IFD (8)
-    const char tiff_hdr[8] = {'I', 'I', 42, 0, 8, 0, 0, 0};
-    out.write(tiff_hdr, 8);
+    GDALAllRegister();
+    auto* driver = GetGDALDriverManager()->GetDriverByName("GTiff");
+    if (driver == nullptr) {
+        throw std::runtime_error("GDAL GTiff driver is unavailable");
+    }
+    const GDALDataType data_type = raster_type == GeoRasterType::byte ? GDT_Byte : GDT_Float32;
+    auto* dataset = driver->Create(path.string().c_str(), static_cast<int>(width),
+                                   static_cast<int>(height), 1, data_type, nullptr);
+    if (dataset == nullptr) {
+        throw std::runtime_error("cannot create GeoTIFF: " + path.string());
+    }
 
-    const std::uint16_t num_tags = 11;
-    out.write(reinterpret_cast<const char*>(&num_tags), 2);
+    try {
+        // Each output pixel represents one decision point. Its center must coincide
+        // with the center of the source 8x8 support, while its basis follows stride.
+        const double center_offset = 3.5 - static_cast<double>(stride) / 2.0;
+        double output_transform[6]{
+            meta.geotransform[0] + center_offset * meta.geotransform[1] + center_offset * meta.geotransform[2],
+            meta.geotransform[1] * static_cast<double>(stride),
+            meta.geotransform[2] * static_cast<double>(stride),
+            meta.geotransform[3] + center_offset * meta.geotransform[4] + center_offset * meta.geotransform[5],
+            meta.geotransform[4] * static_cast<double>(stride),
+            meta.geotransform[5] * static_cast<double>(stride),
+        };
+        if (dataset->SetGeoTransform(output_transform) != CE_None) {
+            throw std::runtime_error("cannot set GeoTIFF geotransform: " + path.string());
+        }
 
-    const std::size_t ifd_start = 8;
-    const std::size_t ifd_size = 2 + num_tags * 12 + 4;
-    const std::size_t scale_offset = ifd_start + ifd_size;
-    const std::size_t tiepoint_offset = scale_offset + 24;
-    const std::size_t data_offset = tiepoint_offset + 48;
+        OGRSpatialReference reference;
+        reference.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
+        if (reference.SetFromUserInput(meta.crs.c_str()) != OGRERR_NONE ||
+            dataset->SetSpatialRef(&reference) != CE_None) {
+            throw std::runtime_error("cannot set GeoTIFF CRS '" + meta.crs + "': " + path.string());
+        }
 
-    auto write_tag = [&](std::uint16_t tag, std::uint16_t type, std::uint32_t count, std::uint32_t val_or_offset) {
-        out.write(reinterpret_cast<const char*>(&tag), 2);
-        out.write(reinterpret_cast<const char*>(&type), 2);
-        out.write(reinterpret_cast<const char*>(&count), 4);
-        out.write(reinterpret_cast<const char*>(&val_or_offset), 4);
-    };
-
-    write_tag(256, 4, 1, static_cast<std::uint32_t>(width));           // ImageWidth
-    write_tag(257, 4, 1, static_cast<std::uint32_t>(height));          // ImageLength
-    write_tag(258, 3, 1, bits_per_sample);                             // BitsPerSample
-    write_tag(259, 3, 1, 1);                                           // Compression (None)
-    write_tag(262, 3, 1, 1);                                           // Photometric (MinIsBlack)
-    write_tag(273, 4, 1, static_cast<std::uint32_t>(data_offset));     // StripOffsets
-    write_tag(277, 3, 1, 1);                                           // SamplesPerPixel
-    write_tag(278, 4, 1, static_cast<std::uint32_t>(height));          // RowsPerStrip
-    write_tag(279, 4, 1, static_cast<std::uint32_t>(byte_count));      // StripByteCounts
-    write_tag(33550, 12, 3, static_cast<std::uint32_t>(scale_offset)); // ModelPixelScaleTag
-    write_tag(33922, 12, 6, static_cast<std::uint32_t>(tiepoint_offset)); // ModelTiepointTag
-
-    const std::uint32_t next_ifd = 0;
-    out.write(reinterpret_cast<const char*>(&next_ifd), 4);
-
-    // Write PixelScale: [pixel_size_x * stride, pixel_size_y * stride, 0.0]
-    const double pixel_scale[3] = {meta.pixel_size_x * static_cast<double>(stride),
-                                   meta.pixel_size_y * static_cast<double>(stride),
-                                   0.0};
-    out.write(reinterpret_cast<const char*>(pixel_scale), sizeof(pixel_scale));
-
-    // Write Tiepoint: [0, 0, 0, origin_x, origin_y, 0]
-    const double tiepoint[6] = {0.0, 0.0, 0.0, meta.geotransform[0], meta.geotransform[3], 0.0};
-    out.write(reinterpret_cast<const char*>(tiepoint), sizeof(tiepoint));
-
-    // Write pixel payload
-    out.write(reinterpret_cast<const char*>(pixel_data), byte_count);
+        auto* band = dataset->GetRasterBand(1);
+        band->SetNoDataValue(raster_type == GeoRasterType::byte ? 255.0 : -9999.0);
+        if (band->RasterIO(GF_Write, 0, 0, static_cast<int>(width), static_cast<int>(height),
+                           const_cast<void*>(pixel_data), static_cast<int>(width),
+                           static_cast<int>(height), data_type, 0, 0, nullptr) != CE_None) {
+            throw std::runtime_error("cannot write GeoTIFF pixels: " + path.string());
+        }
+        dataset->FlushCache();
+        GDALClose(dataset);
+    } catch (...) {
+        GDALClose(dataset);
+        throw;
+    }
+#else
+    (void)path;
+    (void)pixel_data;
+    (void)byte_count;
+    (void)width;
+    (void)height;
+    (void)raster_type;
+    (void)meta;
+    (void)stride;
+    throw std::runtime_error("georeferenced GeoTIFF export requires a build with GDAL support");
+#endif
 }
 
 } // namespace
@@ -720,11 +742,14 @@ void export_dense_map(const DenseMapResult& result,
         }
 
         write_geotiff_raster(output_dir / "class_map.tif", geo_classes.data(), geo_classes.size(),
-                             result.grid_width, result.grid_height, 8, result.metadata, result.config.stride);
+                             result.grid_width, result.grid_height, GeoRasterType::byte,
+                             result.metadata, result.config.stride);
         write_geotiff_raster(output_dir / "confidence.tif", geo_conf.data(), geo_conf.size() * sizeof(float),
-                             result.grid_width, result.grid_height, 32, result.metadata, result.config.stride);
+                             result.grid_width, result.grid_height, GeoRasterType::float32,
+                             result.metadata, result.config.stride);
         write_geotiff_raster(output_dir / "margin.tif", geo_margin.data(), geo_margin.size() * sizeof(float),
-                             result.grid_width, result.grid_height, 32, result.metadata, result.config.stride);
+                             result.grid_width, result.grid_height, GeoRasterType::float32,
+                             result.metadata, result.config.stride);
     }
 }
 

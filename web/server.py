@@ -1165,6 +1165,7 @@ class TinyVisionRequestHandler(http.server.BaseHTTPRequestHandler):
             "classification.csv": "text/csv; charset=utf-8",
             "class_map.tif": "image/tiff",
             "confidence.tif": "image/tiff",
+            "margin.tif": "image/tiff",
             "provenance.json": "application/json",
             "decisions.bin": "application/octet-stream",
             "classification_h3.csv": "text/csv; charset=utf-8",

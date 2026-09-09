@@ -7,7 +7,13 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <tuple>
 #include <vector>
+
+#ifdef TINYVISION_WITH_GDAL
+#include <gdal_priv.h>
+#include <ogr_spatialref.h>
+#endif
 
 namespace {
 
@@ -22,6 +28,8 @@ int main() {
     std::cout << "Running geo_dense_test...\n";
 
     const auto tmp_dir = std::filesystem::temp_directory_path() / "tv_geo_dense_test";
+    std::error_code ec;
+    std::filesystem::remove_all(tmp_dir, ec);
     std::filesystem::create_directories(tmp_dir);
 
     // 1. Create model & synthetic image
@@ -38,7 +46,7 @@ int main() {
     tinyvision::GeoMetadata meta;
     meta.has_geo = true;
     meta.crs = "EPSG:32722";
-    meta.geotransform = {500000.0, 10.0, 0.0, 7500000.0, 0.0, -10.0};
+    meta.geotransform = {500000.0, 10.0, 1.25, 7500000.0, -0.75, -10.0};
     meta.pixel_size_x = 10.0;
     meta.pixel_size_y = 10.0;
     meta.raster_width = 24;
@@ -53,6 +61,18 @@ int main() {
     }
 
     const auto out_dir = tmp_dir / "dense_geo_out";
+#ifndef TINYVISION_WITH_GDAL
+    bool unavailable_rejected = false;
+    try {
+        tinyvision::export_dense_map(res, model, img, "model.tlv", "image.png", out_dir);
+    } catch (const std::runtime_error&) {
+        unavailable_rejected = true;
+    }
+    if (!unavailable_rejected) fail("georeferenced output was silently written without GDAL");
+    std::filesystem::remove_all(tmp_dir, ec);
+    std::cout << "PASS: geo_dense_test (GeoTIFF export correctly requires GDAL)\n";
+    return 0;
+#else
     tinyvision::export_dense_map(res, model, img, "model.tlv", "image.png", out_dir);
 
     // 3. Verify GeoTIFF files were generated
@@ -64,14 +84,66 @@ int main() {
     if (!std::filesystem::exists(conf_tif)) fail("confidence.tif missing");
     if (!std::filesystem::exists(margin_tif)) fail("margin.tif missing");
 
-    // Verify TIFF magic on class_map.tif
-    {
-        std::ifstream f(class_tif, std::ios::binary);
-        char hdr[4];
-        f.read(hdr, 4);
-        if (hdr[0] != 'I' || hdr[1] != 'I' || hdr[2] != 42 || hdr[3] != 0) {
-            fail("class_map.tif is not a valid Little-Endian TIFF file");
+    // Reopen every product through GDAL and verify CRS, full affine transform,
+    // datatype, dimensions and nodata. This catches plain TIFFs mislabeled as GeoTIFF.
+    GDALAllRegister();
+    for (const auto& [path, expected_type, expected_nodata] :
+         std::vector<std::tuple<std::filesystem::path, GDALDataType, double>>{
+             {class_tif, GDT_Byte, 255.0},
+             {conf_tif, GDT_Float32, -9999.0},
+             {margin_tif, GDT_Float32, -9999.0}}) {
+        auto* dataset = static_cast<GDALDataset*>(GDALOpen(path.string().c_str(), GA_ReadOnly));
+        if (dataset == nullptr) fail("GDAL cannot reopen exported GeoTIFF");
+        if (dataset->GetRasterXSize() != static_cast<int>(res.grid_width) ||
+            dataset->GetRasterYSize() != static_cast<int>(res.grid_height) ||
+            dataset->GetRasterBand(1)->GetRasterDataType() != expected_type) {
+            GDALClose(dataset);
+            fail("GeoTIFF dimensions or datatype mismatch");
         }
+
+        const auto* reference = dataset->GetSpatialRef();
+        const char* authority = reference == nullptr ? nullptr : reference->GetAuthorityCode(nullptr);
+        if (authority == nullptr || std::string(authority) != "32722") {
+            GDALClose(dataset);
+            fail("GeoTIFF did not preserve EPSG:32722 CRS");
+        }
+
+        double actual_transform[6]{};
+        if (dataset->GetGeoTransform(actual_transform) != CE_None) {
+            GDALClose(dataset);
+            fail("GeoTIFF geotransform missing");
+        }
+        const double center_offset = 3.5 - static_cast<double>(cfg.stride) / 2.0;
+        const double expected_transform[6]{
+            meta.geotransform[0] + center_offset * meta.geotransform[1] + center_offset * meta.geotransform[2],
+            meta.geotransform[1] * static_cast<double>(cfg.stride),
+            meta.geotransform[2] * static_cast<double>(cfg.stride),
+            meta.geotransform[3] + center_offset * meta.geotransform[4] + center_offset * meta.geotransform[5],
+            meta.geotransform[4] * static_cast<double>(cfg.stride),
+            meta.geotransform[5] * static_cast<double>(cfg.stride),
+        };
+        for (std::size_t i = 0; i < 6; ++i) {
+            if (std::abs(actual_transform[i] - expected_transform[i]) > 1e-9) {
+                GDALClose(dataset);
+                fail("GeoTIFF full affine transform mismatch");
+            }
+        }
+        const auto source_center = meta.pixel_to_map(3.5, 3.5);
+        const double output_center_x = actual_transform[0] + 0.5 * actual_transform[1] + 0.5 * actual_transform[2];
+        const double output_center_y = actual_transform[3] + 0.5 * actual_transform[4] + 0.5 * actual_transform[5];
+        if (std::abs(output_center_x - source_center.first) > 1e-9 ||
+            std::abs(output_center_y - source_center.second) > 1e-9) {
+            GDALClose(dataset);
+            fail("first GeoTIFF pixel center does not match first decision point");
+        }
+
+        int has_nodata = 0;
+        const double nodata = dataset->GetRasterBand(1)->GetNoDataValue(&has_nodata);
+        if (!has_nodata || nodata != expected_nodata) {
+            GDALClose(dataset);
+            fail("GeoTIFF nodata value mismatch");
+        }
+        GDALClose(dataset);
     }
 
     // 4. Verify classification.csv contains map_x and map_y
@@ -98,9 +170,9 @@ int main() {
     }
 
     // Cleanup
-    std::error_code ec;
     std::filesystem::remove_all(tmp_dir, ec);
 
-    std::cout << "PASS: geo_dense_test (GeoTIFF generation, coordinates in CSV, run.json geo metadata)\n";
+    std::cout << "PASS: geo_dense_test (GDAL GeoTIFF CRS, affine transform, nodata, coordinates)\n";
     return 0;
+#endif
 }
