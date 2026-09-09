@@ -3,6 +3,7 @@
 #include "tinyvision/image.hpp"
 
 #include <cmath>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -272,6 +273,74 @@ int main() {
             }
         }
 
+        // 8. Test multi-threaded equivalence: threads=1 vs threads=4
+        {
+            tinyvision::DenseMapConfig cfg1;
+            cfg1.stride = 1;
+            cfg1.threads = 1;
+            const auto res_t1 = tinyvision::classify_dense(model, image, cfg1);
+
+            tinyvision::DenseMapConfig cfg4;
+            cfg4.stride = 1;
+            cfg4.threads = 4;
+            const auto res_t4 = tinyvision::classify_dense(model, image, cfg4);
+
+            if (res_t1.decisions.size() != res_t4.decisions.size()) {
+                std::cerr << "Threaded execution decision count mismatch\n";
+                return 1;
+            }
+
+            for (std::size_t i = 0; i < res_t1.decisions.size(); ++i) {
+                const auto& d1 = res_t1.decisions[i];
+                const auto& d4 = res_t4.decisions[i];
+                if (d1.grid_x != d4.grid_x || d1.grid_y != d4.grid_y ||
+                    d1.origin_x != d4.origin_x || d1.origin_y != d4.origin_y ||
+                    d1.predicted_index != d4.predicted_index ||
+                    d1.second_index != d4.second_index ||
+                    std::abs(d1.probability - d4.probability) > 1e-12 ||
+                    std::abs(d1.second_probability - d4.second_probability) > 1e-12 ||
+                    std::abs(d1.margin - d4.margin) > 1e-12 ||
+                    d1.is_uncertain != d4.is_uncertain) {
+                    std::cerr << "Threaded execution mismatch at decision index " << i << '\n';
+                    return 1;
+                }
+            }
+        }
+
+        // 9. Verify decisions.bin existence and contents
+        {
+            const auto bin_path = tmp_out / "decisions.bin";
+            if (!std::filesystem::exists(bin_path)) {
+                std::cerr << "decisions.bin was not created by export_dense_map\n";
+                return 1;
+            }
+            const auto file_size = std::filesystem::file_size(bin_path);
+            const std::size_t expected_size = 64 + result_export.total_decisions * sizeof(tinyvision::CompactDecisionRecord);
+            if (file_size != expected_size) {
+                std::cerr << "decisions.bin size mismatch: got " << file_size << " expected " << expected_size << '\n';
+                return 1;
+            }
+
+            // Verify first record
+            std::ifstream bf(bin_path, std::ios::binary);
+            char header[64];
+            bf.read(header, 64);
+            if (std::memcmp(header, "TLV_DEC\0", 8) != 0) {
+                std::cerr << "decisions.bin magic mismatch\n";
+                return 1;
+            }
+            tinyvision::CompactDecisionRecord rec0{};
+            bf.read(reinterpret_cast<char*>(&rec0), sizeof(rec0));
+            const auto& d0 = result_export.decisions[0];
+            if (rec0.grid_x != d0.grid_x || rec0.grid_y != d0.grid_y ||
+                rec0.origin_x != d0.origin_x || rec0.origin_y != d0.origin_y ||
+                rec0.predicted_index != d0.predicted_index ||
+                rec0.is_uncertain != (d0.is_uncertain ? 1 : 0)) {
+                std::cerr << "decisions.bin record 0 mismatch\n";
+                return 1;
+            }
+        }
+
         // Cleanup
         std::error_code ec;
         std::filesystem::remove_all(tmp_out, ec);
@@ -281,6 +350,7 @@ int main() {
                   << "decisions_stride1=221 decisions_stride2=63\n"
                   << "center_geometry=EXACT repeatability=EXACT\n"
                   << "overlay_cell_centering=EXACT\n"
+                  << "threads_determinism=EXACT binary_index=PASS\n"
                   << "unified_palette=PASS margin_map=PASS\n";
 
     } catch (const std::exception& error) {

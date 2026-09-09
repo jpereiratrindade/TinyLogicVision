@@ -15,6 +15,7 @@ import json
 import os
 import re
 import socketserver
+import struct
 import subprocess
 import sys
 import threading
@@ -879,12 +880,47 @@ class TinyVisionRequestHandler(http.server.BaseHTTPRequestHandler):
 
         target_row = gy * nx + gx
         row_data = None
-        with open(csv_file, "r", encoding="utf-8") as f:
-            reader = csv.DictReader(f)
-            for idx, row in enumerate(reader):
-                if idx == target_row:
-                    row_data = row
-                    break
+
+        bin_file = RUNS_DIR / clean_id / "decisions.bin"
+        if bin_file.is_file():
+            try:
+                with open(bin_file, "rb") as bf:
+                    hdr = bf.read(64)
+                    if len(hdr) == 64 and hdr[:8] == b"TLV_DEC\x00":
+                        rec_size = struct.unpack("<I", hdr[28:32])[0]
+                        bf.seek(64 + target_row * rec_size)
+                        raw = bf.read(rec_size)
+                        if len(raw) >= 32:
+                            bgx, bgy, box, boy, pred_idx, sec_idx, prob, sec_prob, margin, is_unc = struct.unpack("<IIIIHHfffB", raw[:29])
+                            classes = meta.get("classes", [])
+                            pred_name = classes[pred_idx] if pred_idx < len(classes) else ""
+                            sec_name = classes[sec_idx] if len(classes) > 1 and sec_idx < len(classes) else ""
+                            row_data = {
+                                "grid_x": str(bgx),
+                                "grid_y": str(bgy),
+                                "origin_x": str(box),
+                                "origin_y": str(boy),
+                                "center_x": f"{box + 3.5:.1f}",
+                                "center_y": f"{boy + 3.5:.1f}",
+                                "display_x": str(box + 4),
+                                "display_y": str(boy + 4),
+                                "predicted_class": pred_name,
+                                "probability": f"{prob:.6f}",
+                                "second_class": sec_name,
+                                "second_probability": f"{sec_prob:.6f}" if len(classes) > 1 else "",
+                                "margin": f"{margin:.6f}",
+                                "status": "UNCERTAIN" if is_unc else "CLASSIFIED"
+                            }
+            except Exception:
+                row_data = None
+
+        if row_data is None and csv_file.is_file():
+            with open(csv_file, "r", encoding="utf-8") as f:
+                reader = csv.DictReader(f)
+                for idx, row in enumerate(reader):
+                    if idx == target_row:
+                        row_data = row
+                        break
 
         if row_data is None:
             self.send_error_json("Decision point not found", 404)

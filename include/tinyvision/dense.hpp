@@ -6,7 +6,9 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <filesystem>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -38,6 +40,38 @@ struct DenseDecision {
     bool is_uncertain{};
 };
 
+// Compact, cache-friendly decision record without strings for streaming & tiled engine
+struct CompactDecision {
+    std::uint32_t grid_x{};
+    std::uint32_t grid_y{};
+    std::uint32_t origin_x{};
+    std::uint32_t origin_y{};
+    std::uint16_t predicted_index{};
+    std::uint16_t second_index{};
+    float probability{};
+    float second_probability{};
+    float margin{};
+    bool is_uncertain{};
+};
+
+#pragma pack(push, 1)
+struct CompactDecisionRecord {
+    std::uint32_t grid_x;
+    std::uint32_t grid_y;
+    std::uint32_t origin_x;
+    std::uint32_t origin_y;
+    std::uint16_t predicted_index;
+    std::uint16_t second_index;
+    float probability;
+    float second_probability;
+    float margin;
+    std::uint8_t is_uncertain;
+    std::uint8_t reserved[3];
+};
+#pragma pack(pop)
+
+static_assert(sizeof(CompactDecisionRecord) == 36, "CompactDecisionRecord must be exactly 36 bytes");
+
 struct ClassColor {
     std::string name;
     std::size_t index{};
@@ -57,6 +91,9 @@ struct DenseMapConfig {
     double confidence_threshold{0.0};
     double margin_threshold{0.0};
     bool sentinel_nominal_10m{false}; // User-declared nominal 10m/px scale (unverified metadata)
+    std::size_t threads{0};            // 0 = auto-detect hardware concurrency
+    std::size_t tile_width{256};
+    std::size_t tile_height{256};
 };
 
 struct DenseMapResult {
@@ -68,15 +105,23 @@ struct DenseMapResult {
     std::size_t classified_count{};
     std::size_t uncertain_count{};
     std::vector<DenseDecision> decisions;
+    std::vector<CompactDecision> compact_decisions;
     DenseMapConfig config;
     PaletteConfig palette;
+    std::string implementation_mode{"TILED_STREAMING"};
+    std::size_t thread_count{1};
 };
 
-// Extracts exactly 192 normalized RGB values in scanline order without interpolation:
-// [origin_x, origin_x + 7] x [origin_y, origin_y + 7], normalized by dividing byte values by 255.0.
+// Extracts exactly 192 normalized RGB values in scanline order without interpolation
 std::vector<double> extract_rgb_input_vector(const RgbImage& image,
                                              std::size_t origin_x,
                                              std::size_t origin_y);
+
+// Zero-allocation version writing directly into span
+void extract_rgb_input_vector_into(const RgbImage& image,
+                                   std::size_t origin_x,
+                                   std::size_t origin_y,
+                                   std::span<double> output_192);
 
 DenseMapResult classify_dense(const ApplicationModel& model,
                               const RgbImage& image,

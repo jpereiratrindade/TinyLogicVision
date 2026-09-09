@@ -6,12 +6,16 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <fstream>
+#include <future>
 #include <iomanip>
 #include <iostream>
 #include <map>
 #include <sstream>
 #include <stdexcept>
+#include <thread>
+#include <vector>
 
 namespace tinyvision {
 namespace {
@@ -162,26 +166,36 @@ PaletteConfig get_canonical_palette(const std::vector<std::string>& class_names)
     return config;
 }
 
-std::vector<double> extract_rgb_input_vector(const RgbImage& image,
-                                             std::size_t origin_x,
-                                             std::size_t origin_y) {
+void extract_rgb_input_vector_into(const RgbImage& image,
+                                   std::size_t origin_x,
+                                   std::size_t origin_y,
+                                   std::span<double> output_192) {
     if (origin_x + 8 > image.width || origin_y + 8 > image.height) {
         throw std::out_of_range("8x8 patch exceeds image boundaries");
     }
     if (image.pixels.size() != image.width * image.height * 3) {
         throw std::invalid_argument("invalid RGB image byte count");
     }
+    if (output_192.size() != 192) {
+        throw std::invalid_argument("output span must have size 192");
+    }
 
-    std::vector<double> window(192);
     for (std::size_t wy = 0; wy < 8; ++wy) {
         const std::size_t src_row = ((origin_y + wy) * image.width + origin_x) * 3;
         const std::size_t dst_row = (wy * 8) * 3;
         for (std::size_t wx = 0; wx < 8; ++wx) {
-            window[dst_row + wx * 3 + 0] = static_cast<double>(image.pixels[src_row + wx * 3 + 0]) / 255.0;
-            window[dst_row + wx * 3 + 1] = static_cast<double>(image.pixels[src_row + wx * 3 + 1]) / 255.0;
-            window[dst_row + wx * 3 + 2] = static_cast<double>(image.pixels[src_row + wx * 3 + 2]) / 255.0;
+            output_192[dst_row + wx * 3 + 0] = static_cast<double>(image.pixels[src_row + wx * 3 + 0]) / 255.0;
+            output_192[dst_row + wx * 3 + 1] = static_cast<double>(image.pixels[src_row + wx * 3 + 1]) / 255.0;
+            output_192[dst_row + wx * 3 + 2] = static_cast<double>(image.pixels[src_row + wx * 3 + 2]) / 255.0;
         }
     }
+}
+
+std::vector<double> extract_rgb_input_vector(const RgbImage& image,
+                                             std::size_t origin_x,
+                                             std::size_t origin_y) {
+    std::vector<double> window(192);
+    extract_rgb_input_vector_into(image, origin_x, origin_y, window);
     return window;
 }
 
@@ -211,64 +225,123 @@ DenseMapResult classify_dense(const ApplicationModel& model,
     result.config = config;
     result.palette = get_canonical_palette(model.class_names);
     result.decisions.resize(total_decisions);
+    result.compact_decisions.resize(total_decisions);
 
-    std::size_t decision_index = 0;
-    for (std::size_t gy = 0; gy < grid_height; ++gy) {
-        const std::size_t y = gy * config.stride;
-        for (std::size_t gx = 0; gx < grid_width; ++gx) {
-            const std::size_t x = gx * config.stride;
+    std::size_t num_threads = config.threads;
+    if (num_threads == 0) {
+        num_threads = std::max<std::size_t>(1, std::thread::hardware_concurrency());
+    }
+    num_threads = std::min<std::size_t>(num_threads, grid_height);
+    result.thread_count = num_threads;
+    result.implementation_mode = "TILED_STREAMING";
 
-            // Extract exact 192 normalized RGB inputs (EXACT_RGB_INPUT_VECTOR)
-            const auto window = extract_rgb_input_vector(image, x, y);
-            const auto probabilities = model.network.predict(window);
+    const std::size_t num_classes = model.class_names.size();
 
-            std::size_t top1_idx = 0;
-            std::size_t top2_idx = 0;
-            double top1_prob = -1.0;
-            double top2_prob = -1.0;
+    auto process_rows = [&](std::size_t gy_start, std::size_t gy_end) {
+        MLPWorkspace ws;
+        std::array<double, 192> patch_buf{};
 
-            for (std::size_t c = 0; c < probabilities.size(); ++c) {
-                if (probabilities[c] > top1_prob) {
-                    top2_idx = top1_idx;
-                    top2_prob = top1_prob;
-                    top1_idx = c;
-                    top1_prob = probabilities[c];
-                } else if (probabilities[c] > top2_prob) {
-                    top2_idx = c;
-                    top2_prob = probabilities[c];
+        for (std::size_t gy = gy_start; gy < gy_end; ++gy) {
+            const std::size_t y = gy * config.stride;
+            const std::size_t row_offset = gy * grid_width;
+
+            for (std::size_t gx = 0; gx < grid_width; ++gx) {
+                const std::size_t x = gx * config.stride;
+                const std::size_t dec_idx = row_offset + gx;
+
+                // Extract without heap allocation
+                extract_rgb_input_vector_into(image, x, y, patch_buf);
+
+                // Run forward into reusable workspace
+                model.network.forward_into(patch_buf, ws);
+                const auto& probabilities = ws.probabilities;
+
+                std::size_t top1_idx = 0;
+                std::size_t top2_idx = 0;
+                double top1_prob = -1.0;
+                double top2_prob = -1.0;
+
+                for (std::size_t c = 0; c < num_classes; ++c) {
+                    if (probabilities[c] > top1_prob) {
+                        top2_idx = top1_idx;
+                        top2_prob = top1_prob;
+                        top1_idx = c;
+                        top1_prob = probabilities[c];
+                    } else if (probabilities[c] > top2_prob) {
+                        top2_idx = c;
+                        top2_prob = probabilities[c];
+                    }
                 }
-            }
 
-            const double margin = top1_prob - (probabilities.size() > 1 ? top2_prob : 0.0);
-            const bool is_uncertain = (top1_prob < config.confidence_threshold) ||
-                                      (margin < config.margin_threshold);
+                const double margin = top1_prob - (num_classes > 1 ? top2_prob : 0.0);
+                const bool is_uncertain = (top1_prob < config.confidence_threshold) ||
+                                          (margin < config.margin_threshold);
 
-            auto& d = result.decisions[decision_index++];
-            d.grid_x = gx;
-            d.grid_y = gy;
-            d.origin_x = x;
-            d.origin_y = y;
-            d.center_x = static_cast<double>(x) + 3.5;
-            d.center_y = static_cast<double>(y) + 3.5;
-            d.display_x = x + 4;
-            d.display_y = y + 4;
-            d.predicted_index = top1_idx;
-            d.predicted_class = model.class_names[top1_idx];
-            d.probability = top1_prob;
-            d.second_index = top2_idx;
-            d.second_class = probabilities.size() > 1 ? model.class_names[top2_idx] : "";
-            d.second_probability = probabilities.size() > 1 ? top2_prob : 0.0;
-            d.margin = margin;
-            d.is_uncertain = is_uncertain;
-            d.status = is_uncertain ? "UNCERTAIN" : "CLASSIFIED";
+                // 1. Fill compact decision
+                auto& cd = result.compact_decisions[dec_idx];
+                cd.grid_x = static_cast<std::uint32_t>(gx);
+                cd.grid_y = static_cast<std::uint32_t>(gy);
+                cd.origin_x = static_cast<std::uint32_t>(x);
+                cd.origin_y = static_cast<std::uint32_t>(y);
+                cd.predicted_index = static_cast<std::uint16_t>(top1_idx);
+                cd.second_index = static_cast<std::uint16_t>(top2_idx);
+                cd.probability = static_cast<float>(top1_prob);
+                cd.second_probability = static_cast<float>(num_classes > 1 ? top2_prob : 0.0);
+                cd.margin = static_cast<float>(margin);
+                cd.is_uncertain = is_uncertain;
 
-            if (is_uncertain) {
-                result.uncertain_count++;
-            } else {
-                result.classified_count++;
+                // 2. Fill standard DenseDecision for backwards compatibility
+                auto& d = result.decisions[dec_idx];
+                d.grid_x = gx;
+                d.grid_y = gy;
+                d.origin_x = x;
+                d.origin_y = y;
+                d.center_x = static_cast<double>(x) + 3.5;
+                d.center_y = static_cast<double>(y) + 3.5;
+                d.display_x = x + 4;
+                d.display_y = y + 4;
+                d.predicted_index = top1_idx;
+                d.predicted_class = model.class_names[top1_idx];
+                d.probability = top1_prob;
+                d.second_index = top2_idx;
+                d.second_class = num_classes > 1 ? model.class_names[top2_idx] : "";
+                d.second_probability = num_classes > 1 ? top2_prob : 0.0;
+                d.margin = margin;
+                d.is_uncertain = is_uncertain;
+                d.status = is_uncertain ? "UNCERTAIN" : "CLASSIFIED";
             }
         }
+    };
+
+    if (num_threads <= 1) {
+        process_rows(0, grid_height);
+    } else {
+        std::vector<std::future<void>> futures;
+        const std::size_t rows_per_thread = (grid_height + num_threads - 1) / num_threads;
+        for (std::size_t t = 0; t < num_threads; ++t) {
+            const std::size_t start_row = t * rows_per_thread;
+            const std::size_t end_row = std::min(grid_height, start_row + rows_per_thread);
+            if (start_row < end_row) {
+                futures.push_back(std::async(std::launch::async, process_rows, start_row, end_row));
+            }
+        }
+        for (auto& f : futures) {
+            f.get();
+        }
     }
+
+    // Count totals deterministically
+    std::size_t classified = 0;
+    std::size_t uncertain = 0;
+    for (const auto& cd : result.compact_decisions) {
+        if (cd.is_uncertain) {
+            ++uncertain;
+        } else {
+            ++classified;
+        }
+    }
+    result.classified_count = classified;
+    result.uncertain_count = uncertain;
 
     return result;
 }
@@ -301,7 +374,46 @@ void export_dense_map(const DenseMapResult& result,
             << d.status << '\n';
     }
 
-    // 2. Export run.json
+    // 2. Export decisions.bin for O(1) indexed lookup
+    const auto bin_path = output_dir / "decisions.bin";
+    std::ofstream binf(bin_path, std::ios::binary | std::ios::trunc);
+    if (binf) {
+        // 64-byte Header
+        char header[64]{0};
+        std::memcpy(header, "TLV_DEC\0", 8);
+        const std::uint32_t version = 1;
+        const std::uint32_t gw = static_cast<std::uint32_t>(result.grid_width);
+        const std::uint32_t gh = static_cast<std::uint32_t>(result.grid_height);
+        const std::uint32_t stride = static_cast<std::uint32_t>(result.config.stride);
+        const std::uint32_t class_count = static_cast<std::uint32_t>(model.class_names.size());
+        const std::uint32_t record_size = sizeof(CompactDecisionRecord);
+
+        std::memcpy(header + 8, &version, 4);
+        std::memcpy(header + 12, &gw, 4);
+        std::memcpy(header + 16, &gh, 4);
+        std::memcpy(header + 20, &stride, 4);
+        std::memcpy(header + 24, &class_count, 4);
+        std::memcpy(header + 28, &record_size, 4);
+        binf.write(header, 64);
+
+        // Fixed records
+        for (const auto& cd : result.compact_decisions) {
+            CompactDecisionRecord rec{};
+            rec.grid_x = cd.grid_x;
+            rec.grid_y = cd.grid_y;
+            rec.origin_x = cd.origin_x;
+            rec.origin_y = cd.origin_y;
+            rec.predicted_index = cd.predicted_index;
+            rec.second_index = cd.second_index;
+            rec.probability = cd.probability;
+            rec.second_probability = cd.second_probability;
+            rec.margin = cd.margin;
+            rec.is_uncertain = cd.is_uncertain ? 1 : 0;
+            binf.write(reinterpret_cast<const char*>(&rec), sizeof(rec));
+        }
+    }
+
+    // 3. Export run.json
     const auto json_path = output_dir / "run.json";
     std::ofstream js(json_path);
     if (!js) {
@@ -358,6 +470,13 @@ void export_dense_map(const DenseMapResult& result,
        << "    \"margin\": \"Top-1 minus Top-2 softmax probability\",\n"
        << "    \"status_definition\": \"UNCERTAIN when top1 < confidence_threshold OR margin < margin_threshold (UNCERTAIN_BY_CONFIGURED_THRESHOLD)\"\n"
        << "  },\n"
+       << "  \"engineering_stats\": {\n"
+       << "    \"implementation_mode\": \"" << result.implementation_mode << "\",\n"
+       << "    \"thread_count\": " << result.thread_count << ",\n"
+       << "    \"tile_dimensions\": [" << result.config.tile_width << ", " << result.config.tile_height << "],\n"
+       << "    \"decision_record_version\": 1,\n"
+       << "    \"indexed_binary_available\": true\n"
+       << "  },\n"
        << "  \"confidence_threshold\": " << std::fixed << std::setprecision(4) << result.config.confidence_threshold << ",\n"
        << "  \"margin_threshold\": " << result.config.margin_threshold << ",\n"
        << "  \"sentinel_nominal_10m\": " << (result.config.sentinel_nominal_10m ? "true" : "false") << ",\n"
@@ -404,61 +523,62 @@ void export_dense_map(const DenseMapResult& result,
        << "  }\n"
        << "}\n";
 
-    // 3. Export class_map.png (GRID SPACE: grid_width x grid_height)
+    // 4. Export class_map.png (GRID SPACE: grid_width x grid_height)
     RgbImage class_map;
     class_map.width = result.grid_width;
     class_map.height = result.grid_height;
     class_map.pixels.resize(result.grid_width * result.grid_height * 3);
 
-    for (const auto& d : result.decisions) {
-        const auto color = get_decision_color(result.palette, d.predicted_index, d.is_uncertain);
-        const std::size_t idx = (d.grid_y * result.grid_width + d.grid_x) * 3;
+    for (const auto& cd : result.compact_decisions) {
+        const auto color = get_decision_color(result.palette, cd.predicted_index, cd.is_uncertain);
+        const std::size_t idx = (cd.grid_y * result.grid_width + cd.grid_x) * 3;
         class_map.pixels[idx + 0] = color[0];
         class_map.pixels[idx + 1] = color[1];
         class_map.pixels[idx + 2] = color[2];
     }
     save_png_image(output_dir / "class_map.png", class_map);
 
-    // 4. Export confidence.png (GRID SPACE: Top-1 Probability map)
+    // 5. Export confidence.png (GRID SPACE: Top-1 Probability map)
     RgbImage conf_map;
     conf_map.width = result.grid_width;
     conf_map.height = result.grid_height;
     conf_map.pixels.resize(result.grid_width * result.grid_height * 3);
 
-    for (const auto& d : result.decisions) {
-        const auto val = static_cast<std::uint8_t>(std::clamp(d.probability * 255.0, 0.0, 255.0));
-        const std::size_t idx = (d.grid_y * result.grid_width + d.grid_x) * 3;
+    for (const auto& cd : result.compact_decisions) {
+        const auto val = static_cast<std::uint8_t>(std::clamp(cd.probability * 255.0f, 0.0f, 255.0f));
+        const std::size_t idx = (cd.grid_y * result.grid_width + cd.grid_x) * 3;
         conf_map.pixels[idx + 0] = val;
         conf_map.pixels[idx + 1] = val;
         conf_map.pixels[idx + 2] = val;
     }
     save_png_image(output_dir / "confidence.png", conf_map);
 
-    // 5. Export margin.png (GRID SPACE: Top-1 minus Top-2 Margin map)
+    // 6. Export margin.png (GRID SPACE: Top-1 minus Top-2 Margin map)
     RgbImage margin_map;
     margin_map.width = result.grid_width;
     margin_map.height = result.grid_height;
     margin_map.pixels.resize(result.grid_width * result.grid_height * 3);
 
-    for (const auto& d : result.decisions) {
-        const auto val = static_cast<std::uint8_t>(std::clamp(d.margin * 255.0, 0.0, 255.0));
-        const std::size_t idx = (d.grid_y * result.grid_width + d.grid_x) * 3;
+    for (const auto& cd : result.compact_decisions) {
+        const auto val = static_cast<std::uint8_t>(std::clamp(cd.margin * 255.0f, 0.0f, 255.0f));
+        const std::size_t idx = (cd.grid_y * result.grid_width + cd.grid_x) * 3;
         margin_map.pixels[idx + 0] = val;
         margin_map.pixels[idx + 1] = val;
         margin_map.pixels[idx + 2] = val;
     }
     save_png_image(output_dir / "margin.png", margin_map);
 
-    // 6. Export overlay.png (SOURCE IMAGE SPACE: width x height, single authoritative C++ projection centered on decisions)
+    // 7. Export overlay.png (SOURCE IMAGE SPACE: width x height, single authoritative C++ projection centered on decisions)
     RgbImage overlay = source_image;
     const std::size_t stride = result.config.stride;
     const std::int64_t half_stride = static_cast<std::int64_t>(stride / 2);
 
-    for (const auto& d : result.decisions) {
-        const auto color = get_decision_color(result.palette, d.predicted_index, d.is_uncertain);
-        // Decision cell centered on display anchor: [display - floor(stride/2), display - floor(stride/2) + stride - 1]
-        const std::int64_t cell_x0 = static_cast<std::int64_t>(d.display_x) - half_stride;
-        const std::int64_t cell_y0 = static_cast<std::int64_t>(d.display_y) - half_stride;
+    for (const auto& cd : result.compact_decisions) {
+        const auto color = get_decision_color(result.palette, cd.predicted_index, cd.is_uncertain);
+        const std::int64_t display_x = static_cast<std::int64_t>(cd.origin_x + 4);
+        const std::int64_t display_y = static_cast<std::int64_t>(cd.origin_y + 4);
+        const std::int64_t cell_x0 = display_x - half_stride;
+        const std::int64_t cell_y0 = display_y - half_stride;
 
         for (std::size_t dy = 0; dy < stride; ++dy) {
             const std::int64_t py = cell_y0 + static_cast<std::int64_t>(dy);

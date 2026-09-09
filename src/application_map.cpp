@@ -15,6 +15,7 @@ int main(int argc, char** argv) {
                   << "  --stride 1|2|4|8      Decision spacing (default: 1)\n"
                   << "  --confidence FLOAT    Minimum top-1 probability threshold [0.0..1.0] (default: 0.0)\n"
                   << "  --margin FLOAT        Minimum margin (top1 - top2) threshold [0.0..1.0] (default: 0.0)\n"
+                  << "  --threads N           Number of inference threads (default: auto)\n"
                   << "  --sentinel-10m        Declare nominal 10m/pixel resolution (operator-declared scale; context=80m, spacing=stride*10m)\n";
         return 2;
     }
@@ -34,6 +35,8 @@ int main(int argc, char** argv) {
                 config.confidence_threshold = std::stod(argv[++i]);
             } else if (arg == "--margin" && i + 1 < argc) {
                 config.margin_threshold = std::stod(argv[++i]);
+            } else if (arg == "--threads" && i + 1 < argc) {
+                config.threads = static_cast<std::size_t>(std::stoul(argv[++i]));
             } else if (arg == "--sentinel-10m") {
                 config.sentinel_nominal_10m = true;
             } else {
