@@ -35,6 +35,11 @@ void validate_multiband_alignment(const std::vector<GeoMetadata>& band_metas) {
             throw std::invalid_argument(ss.str());
         }
 
+        if (base.has_geo != other.has_geo) {
+            throw std::invalid_argument("multiband georeferencing availability mismatch between band 0 and band " +
+                                        std::to_string(i));
+        }
+
         if (base.has_geo && other.has_geo) {
             if (base.crs != other.crs) {
                 std::ostringstream ss;

@@ -932,6 +932,42 @@ body {
   gap: 16px;
 }
 
+.schema-compatibility {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  padding: 9px 12px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.schema-compatibility strong {
+  color: var(--text-main);
+  font-family: var(--font-mono);
+}
+
+.schema-compatibility[data-status="compatible"] {
+  border-color: rgba(16, 185, 129, 0.5);
+}
+
+.schema-compatibility[data-status="incompatible"] {
+  border-color: rgba(244, 63, 94, 0.65);
+}
+
+.schema-compatibility[data-status="compatible"] #dense-schema-status {
+  background: rgba(16, 185, 129, 0.2);
+  color: #34d399;
+}
+
+.schema-compatibility[data-status="incompatible"] #dense-schema-status {
+  background: rgba(244, 63, 94, 0.2);
+  color: #fb7185;
+}
+
 .flex-row-gap {
   display: flex;
   gap: 8px;

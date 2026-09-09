@@ -267,6 +267,12 @@ DenseMapResult classify_dense_source(const ApplicationModel& model,
     if (source.width() < 8 || source.height() < 8) {
         throw std::invalid_argument("raster source must be at least 8x8 pixels");
     }
+    if (model.schema != source.schema()) {
+        throw std::invalid_argument("model input schema does not match raster source schema");
+    }
+    if (model.network.input_size() != source.schema().input_size()) {
+        throw std::invalid_argument("model input count does not match raster source schema");
+    }
 
     const std::size_t grid_width = (source.width() - 8) / config.stride + 1;
     const std::size_t grid_height = (source.height() - 8) / config.stride + 1;
@@ -527,6 +533,10 @@ void export_dense_map(const DenseMapResult& result,
        << "  \"source_sha256\": \"" << source_sha << "\",\n"
        << "  \"source_width\": " << result.source_width << ",\n"
        << "  \"source_height\": " << result.source_height << ",\n"
+       << "  \"preview_width\": " << source_image.width << ",\n"
+       << "  \"preview_height\": " << source_image.height << ",\n"
+       << "  \"input_modality\": \"" << modality_to_string(model.schema.modality) << "\",\n"
+       << "  \"input_channels\": " << model.schema.channels << ",\n"
        << "  \"patch_width\": 8,\n"
        << "  \"patch_height\": 8,\n"
        << "  \"stride\": " << result.config.stride << ",\n"
@@ -659,20 +669,30 @@ void export_dense_map(const DenseMapResult& result,
 
     // 7. Export overlay.png
     RgbImage overlay = source_image;
-    const std::size_t stride = result.config.stride;
-    const std::int64_t half_stride = static_cast<std::int64_t>(stride / 2);
+    const double preview_scale_x = static_cast<double>(source_image.width) /
+                                   static_cast<double>(result.source_width);
+    const double preview_scale_y = static_cast<double>(source_image.height) /
+                                   static_cast<double>(result.source_height);
+    const std::size_t display_stride_x = std::max<std::size_t>(
+        1, static_cast<std::size_t>(std::ceil(static_cast<double>(result.config.stride) * preview_scale_x)));
+    const std::size_t display_stride_y = std::max<std::size_t>(
+        1, static_cast<std::size_t>(std::ceil(static_cast<double>(result.config.stride) * preview_scale_y)));
+    const std::int64_t half_stride_x = static_cast<std::int64_t>(display_stride_x / 2);
+    const std::int64_t half_stride_y = static_cast<std::int64_t>(display_stride_y / 2);
 
     for (const auto& cd : result.compact_decisions) {
         const auto color = get_decision_color(result.palette, cd.predicted_index, cd.is_uncertain);
-        const std::int64_t display_x = static_cast<std::int64_t>(cd.origin_x + 4);
-        const std::int64_t display_y = static_cast<std::int64_t>(cd.origin_y + 4);
-        const std::int64_t cell_x0 = display_x - half_stride;
-        const std::int64_t cell_y0 = display_y - half_stride;
+        const std::int64_t display_x = static_cast<std::int64_t>(std::floor(
+            (static_cast<double>(cd.origin_x) + 3.5) * preview_scale_x));
+        const std::int64_t display_y = static_cast<std::int64_t>(std::floor(
+            (static_cast<double>(cd.origin_y) + 3.5) * preview_scale_y));
+        const std::int64_t cell_x0 = display_x - half_stride_x;
+        const std::int64_t cell_y0 = display_y - half_stride_y;
 
-        for (std::size_t dy = 0; dy < stride; ++dy) {
+        for (std::size_t dy = 0; dy < display_stride_y; ++dy) {
             const std::int64_t py = cell_y0 + static_cast<std::int64_t>(dy);
             if (py < 0 || py >= static_cast<std::int64_t>(source_image.height)) continue;
-            for (std::size_t dx = 0; dx < stride; ++dx) {
+            for (std::size_t dx = 0; dx < display_stride_x; ++dx) {
                 const std::int64_t px = cell_x0 + static_cast<std::int64_t>(dx);
                 if (px < 0 || px >= static_cast<std::int64_t>(source_image.width)) continue;
 

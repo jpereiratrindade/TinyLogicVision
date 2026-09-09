@@ -74,6 +74,7 @@ run_test core_perf_test core_perf_test
 run_test schema_model_test schema_model_test
 run_test multichannel_test multichannel_test
 run_test geo_test geo_test
+run_test gdal_source_test gdal_source_test
 run_test geo_dense_test geo_dense_test
 run_test sentinel_test sentinel_test
 run_test provenance_test provenance_test

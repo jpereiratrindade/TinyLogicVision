@@ -117,6 +117,10 @@ const el = {
   btnDenseUpload: document.getElementById('btn-dense-upload'),
   denseSelectStride: document.getElementById('dense-select-stride'),
   denseSelectThreads: document.getElementById('dense-select-threads'),
+  denseSchemaCompatibility: document.getElementById('dense-schema-compatibility'),
+  denseModelSchema: document.getElementById('dense-model-schema'),
+  denseSourceSchema: document.getElementById('dense-source-schema'),
+  denseSchemaStatus: document.getElementById('dense-schema-status'),
   denseSliderConfidence: document.getElementById('dense-slider-confidence'),
   denseValConfidence: document.getElementById('dense-val-confidence'),
   denseSliderMargin: document.getElementById('dense-slider-margin'),
@@ -656,10 +660,14 @@ function applySentinelDescriptor(data) {
   };
   img.src = data.preview_url || `/api/image?path=${encodeURIComponent(data.preview_path)}`;
 
+  selectDenseActiveSource('Sentinel-2 B2/B3/B4/B8');
   refreshWorkspaceStatus();
+  updateDenseSchemaCompatibility();
 }
 
 function handleLoadedSource(data) {
+  state.modality = 'RGB';
+  state.sentinelDescriptor = null;
   state.imagePath = data.path;
   state.imageMeta = data;
 
@@ -690,7 +698,21 @@ function handleLoadedSource(data) {
   };
   img.src = `/api/image?path=${encodeURIComponent(data.path)}`;
 
+  selectDenseActiveSource(data.filename || 'Imagem RGB');
   refreshWorkspaceStatus();
+  updateDenseSchemaCompatibility();
+}
+
+function selectDenseActiveSource(label) {
+  if (!el.denseSelectImage || !state.imagePath) return;
+  let option = Array.from(el.denseSelectImage.options).find((item) => item.value === state.imagePath);
+  if (!option) {
+    option = document.createElement('option');
+    option.value = state.imagePath;
+    el.denseSelectImage.prepend(option);
+  }
+  option.textContent = `⭐ Cena Ativa no Canvas (${label})`;
+  el.denseSelectImage.value = state.imagePath;
 }
 
 function updateSentinelBadges() {
@@ -1256,6 +1278,13 @@ function setupClassifyAndEval() {
 
 // 9. Dense Map Setup (With Multithreading, GeoTIFF, H3 & O(1) Binary Inspection)
 function setupDenseMap() {
+  const selectedModelMetadata = () => state.models.find((item) => item.name === el.denseSelectModel.value);
+  const selectedSourceIsActiveSentinel = () => Boolean(
+    state.sentinelDescriptor &&
+    state.sentinelDescriptor.bands &&
+    el.denseSelectImage.value === state.imagePath
+  );
+
   el.denseSliderConfidence.addEventListener('input', (e) => {
     el.denseValConfidence.textContent = parseFloat(e.target.value).toFixed(2);
   });
@@ -1418,11 +1447,16 @@ function setupDenseMap() {
           } else {
             handleLoadedSource(data);
           }
+          updateDenseSchemaCompatibility();
         }
       } catch (err) {
         console.error(err);
       }
     });
+  }
+
+  if (el.denseSelectModel) {
+    el.denseSelectModel.addEventListener('change', updateDenseSchemaCompatibility);
   }
 
   el.btnRunDenseMap.addEventListener('click', async () => {
@@ -1431,10 +1465,20 @@ function setupDenseMap() {
     const stride = parseInt(el.denseSelectStride.value, 10);
     const confidence = parseFloat(el.denseSliderConfidence.value);
     const margin = parseFloat(el.denseSliderMargin.value);
+    const threads = parseInt(el.denseSelectThreads.value, 10);
     const isSentinel = el.denseChkSentinel10m.checked;
+    const modelMetadata = selectedModelMetadata();
+    const sourceIsSentinel = selectedSourceIsActiveSentinel();
+    const modelChannels = modelMetadata && modelMetadata.schema ? modelMetadata.schema.channels : 3;
 
     if (!model || !imagePath) {
       alert('Selecione modelo e imagem');
+      return;
+    }
+    if ((modelChannels === 4) !== sourceIsSentinel) {
+      const expected = modelChannels === 4 ? 'uma fonte Sentinel B2/B3/B4/B8' : 'uma imagem RGB';
+      alert(`Schema incompatível: o modelo selecionado exige ${expected}.`);
+      updateDenseSchemaCompatibility();
       return;
     }
 
@@ -1451,7 +1495,9 @@ function setupDenseMap() {
           stride,
           confidence,
           margin,
+          threads,
           is_sentinel_10m: isSentinel,
+          bands: sourceIsSentinel ? state.sentinelDescriptor.bands : null,
         }),
       });
       const data = await res.json();
@@ -1465,6 +1511,35 @@ function setupDenseMap() {
       el.denseProgress.classList.add('hidden');
     }
   });
+}
+
+function updateDenseSchemaCompatibility() {
+  if (!el.denseSchemaCompatibility) return;
+  const model = state.models.find((item) => el.denseSelectModel && item.name === el.denseSelectModel.value);
+  const modelSchema = model && model.schema ? model.schema : null;
+  const sourceIsSentinel = Boolean(
+    state.sentinelDescriptor && state.sentinelDescriptor.bands &&
+    el.denseSelectImage && el.denseSelectImage.value === state.imagePath
+  );
+  const hasSource = Boolean(el.denseSelectImage && el.denseSelectImage.value);
+  const sourceChannels = sourceIsSentinel ? 4 : (hasSource ? 3 : null);
+
+  el.denseModelSchema.textContent = modelSchema
+    ? `${modelSchema.modality} (${modelSchema.width}×${modelSchema.height}×${modelSchema.channels})`
+    : 'não selecionado';
+  el.denseSourceSchema.textContent = sourceChannels
+    ? `${sourceIsSentinel ? 'SENTINEL2_MULTIBAND' : 'RGB'} (8×8×${sourceChannels})`
+    : 'não selecionada';
+
+  if (!modelSchema || !sourceChannels) {
+    el.denseSchemaCompatibility.dataset.status = 'unknown';
+    el.denseSchemaStatus.textContent = 'AGUARDANDO SELEÇÃO';
+    return;
+  }
+
+  const compatible = modelSchema.width === 8 && modelSchema.height === 8 && modelSchema.channels === sourceChannels;
+  el.denseSchemaCompatibility.dataset.status = compatible ? 'compatible' : 'incompatible';
+  el.denseSchemaStatus.textContent = compatible ? 'SCHEMA COMPATÍVEL' : 'SCHEMA INCOMPATÍVEL';
 }
 
 function renderDenseMapResults(runId, metadata) {
@@ -1727,6 +1802,7 @@ async function refreshWorkspaceStatus() {
       if (currentVal && Array.from(el.denseSelectImage.options).some(o => o.value === currentVal)) {
         el.denseSelectImage.value = currentVal;
       }
+      updateDenseSchemaCompatibility();
     }
 
     if (el.browserDatasetsCount) el.browserDatasetsCount.textContent = state.datasets.length;

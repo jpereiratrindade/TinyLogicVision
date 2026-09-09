@@ -105,6 +105,30 @@ def get_image_dimensions(image_path: Path):
     return 0, 0
 
 
+def get_gdal_raster_signature(image_path: Path):
+    """Return the alignment-critical raster metadata without inventing GEO values."""
+    if not HAS_GDAL:
+        return None
+    dataset = gdal.Open(str(image_path))
+    if dataset is None:
+        return None
+    projection = dataset.GetProjection() or None
+    geotransform = dataset.GetGeoTransform(can_return_null=True)
+    spatial_ref = dataset.GetSpatialRef()
+    authority_name = spatial_ref.GetAuthorityName(None) if spatial_ref else None
+    authority_code = spatial_ref.GetAuthorityCode(None) if spatial_ref else None
+    crs_label = f"{authority_name}:{authority_code}" if authority_name and authority_code else projection
+    signature = {
+        "width": dataset.RasterXSize,
+        "height": dataset.RasterYSize,
+        "projection": projection,
+        "geotransform": tuple(geotransform) if geotransform is not None else None,
+        "crs_label": crs_label,
+    }
+    dataset = None
+    return signature
+
+
 def read_band_2d(image_path: Path, max_dim: int = 2048):
     """Reads 2D single-band float32 raster with optional downsampled preview."""
     import numpy as np
@@ -1005,6 +1029,21 @@ class TinyVisionRequestHandler(http.server.BaseHTTPRequestHandler):
         models = []
         for m in sorted(MODELS_DIR.glob("*.tlv")):
             if m.is_file():
+                schema = None
+                try:
+                    with open(m, "r", encoding="utf-8") as model_file:
+                        magic_line = model_file.readline().split()
+                        header = model_file.readline().split()
+                    if len(magic_line) == 2 and magic_line[0] == "TINYLOGICVISION_APP_MODEL":
+                        version = int(magic_line[1])
+                        if version == 1 and len(header) >= 5:
+                            schema = {"width": int(header[0]), "height": int(header[1]), "channels": 3, "modality": "RGB"}
+                        elif version == 2 and len(header) >= 7:
+                            schema = {"width": int(header[0]), "height": int(header[1]), "channels": int(header[2]), "modality": header[3]}
+                        if schema:
+                            schema["input_size"] = schema["width"] * schema["height"] * schema["channels"]
+                except (OSError, ValueError):
+                    schema = None
                 models.append({
                     "name": m.name,
                     "path": str(m),
@@ -1012,6 +1051,7 @@ class TinyVisionRequestHandler(http.server.BaseHTTPRequestHandler):
                     "updated_at": datetime.datetime.fromtimestamp(
                         m.stat().st_mtime, datetime.timezone.utc
                     ).isoformat(),
+                    "schema": schema,
                 })
         return models
 
@@ -1034,7 +1074,9 @@ class TinyVisionRequestHandler(http.server.BaseHTTPRequestHandler):
         stride = int(req.get("stride", 1))
         confidence = float(req.get("confidence", 0.0))
         margin = float(req.get("margin", 0.0))
+        threads = int(req.get("threads", 0))
         is_sentinel = bool(req.get("is_sentinel_10m", False))
+        bands = req.get("bands") or {}
 
         if not model_path.is_file():
             self.send_error_json(f"Model file not found: {model_path.name}", 400)
@@ -1062,6 +1104,26 @@ class TinyVisionRequestHandler(http.server.BaseHTTPRequestHandler):
             "--confidence", str(confidence),
             "--margin", str(margin),
         ]
+        if threads > 0:
+            cmd.extend(["--threads", str(threads)])
+        if bands:
+            normalized_bands = {}
+            for band_name in ("b2", "b3", "b4", "b8"):
+                band_value = bands.get(band_name)
+                if isinstance(band_value, dict):
+                    band_value = band_value.get("path", "")
+                band_path = Path(str(band_value or ""))
+                if not is_safe_path(band_path) or not band_path.is_file():
+                    self.send_error_json(f"Sentinel band {band_name.upper()} not found or forbidden", 400)
+                    return
+                normalized_bands[band_name] = band_path
+            cmd.extend([
+                "--band-b2", str(normalized_bands["b2"]),
+                "--band-b3", str(normalized_bands["b3"]),
+                "--band-b4", str(normalized_bands["b4"]),
+                "--band-b8", str(normalized_bands["b8"]),
+            ])
+            is_sentinel = True
         if is_sentinel:
             cmd.append("--sentinel-10m")
 
@@ -1480,6 +1542,27 @@ class TinyVisionRequestHandler(http.server.BaseHTTPRequestHandler):
                 self.send_error_json(f"Dimensões incompatíveis entre bandas Sentinel: B4=({w}x{h}), B3=({w3}x{h3}), B2=({w2}x{h2}), B8=({w8}x{h8})", 400)
                 return
 
+            band_paths = {"B2": b2_path, "B3": b3_path, "B4": b4_path, "B8": b8_path}
+            band_signatures = {name: get_gdal_raster_signature(path) for name, path in band_paths.items()}
+            if HAS_GDAL and any(signature is None for signature in band_signatures.values()):
+                self.send_error_json("Falha ao ler metadados GDAL de todas as quatro bandas Sentinel-2.", 400)
+                return
+            if HAS_GDAL:
+                base_signature = band_signatures["B2"]
+                base_has_geo = bool(base_signature["projection"] and base_signature["geotransform"])
+                for band_name, signature in band_signatures.items():
+                    has_geo = bool(signature["projection"] and signature["geotransform"])
+                    if has_geo != base_has_geo:
+                        self.send_error_json(f"Georreferenciamento incompatível entre B2 e {band_name}.", 400)
+                        return
+                    if base_has_geo:
+                        if signature["projection"] != base_signature["projection"]:
+                            self.send_error_json(f"CRS incompatível entre B2 e {band_name}.", 400)
+                            return
+                        if any(abs(a - b) > 1e-7 for a, b in zip(signature["geotransform"], base_signature["geotransform"])):
+                            self.send_error_json(f"Geotransform incompatível entre B2 e {band_name}.", 400)
+                            return
+
             prev_hash = compute_sha256(f"{b2_path}_{b3_path}_{b4_path}_{b8_path}".encode("utf-8"))[:12]
 
             # 1. True Color Preview (B4, B3, B2 or TCI)
@@ -1549,19 +1632,19 @@ class TinyVisionRequestHandler(http.server.BaseHTTPRequestHandler):
                 save_png_patch(ndvi_composite.tobytes(), pw, ph, preview_ndvi_path)
 
             crs_desc = None
+            crs_wkt = None
             geo_transform = None
-            if HAS_GDAL:
-                try:
-                    ds = gdal.Open(str(b4_path))
-                    if ds:
-                        proj = ds.GetProjection()
-                        gt = ds.GetGeoTransform()
-                        if proj and str(proj).strip():
-                            crs_desc = str(proj)[:80]
-                        if gt and len(gt) == 6 and any(gt):
-                            geo_transform = list(gt)
-                except Exception:
-                    pass
+            pixel_size = None
+            if HAS_GDAL and band_signatures["B2"]:
+                signature = band_signatures["B2"]
+                crs_desc = signature["crs_label"]
+                crs_wkt = signature["projection"]
+                if signature["geotransform"] is not None:
+                    geo_transform = list(signature["geotransform"])
+                    pixel_size = (
+                        (geo_transform[1] ** 2 + geo_transform[4] ** 2) ** 0.5,
+                        (geo_transform[2] ** 2 + geo_transform[5] ** 2) ** 0.5,
+                    )
 
             descriptor = {
                 "success": True,
@@ -1587,8 +1670,9 @@ class TinyVisionRequestHandler(http.server.BaseHTTPRequestHandler):
                 },
                 "tci_path": str(tci_path) if tci_path else None,
                 "crs": crs_desc,
+                "crs_wkt": crs_wkt,
                 "geotransform": geo_transform,
-                "pixel_size_m": 10.0,
+                "pixel_size_m": pixel_size[0] if pixel_size else None,
             }
 
             self.send_json(descriptor)

@@ -3,6 +3,13 @@ project(TinyLogicVision VERSION 0.1.0 LANGUAGES CXX)
 
 find_package(PNG REQUIRED)
 find_package(JPEG REQUIRED)
+option(TINYVISION_WITH_GDAL "Enable native GDAL raster sources and GeoTIFF output" ON)
+if(TINYVISION_WITH_GDAL)
+    find_package(GDAL QUIET)
+    if(NOT GDAL_FOUND)
+        message(WARNING "GDAL was not found; native multiband raster support is disabled")
+    endif()
+endif()
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -23,6 +30,7 @@ add_library(tinyvision_application
     src/dense.cpp
     src/tensor.cpp
     src/geo.cpp
+    src/gdal_source.cpp
     src/sentinel.cpp
     src/provenance.cpp
     src/h3_index.cpp
@@ -30,6 +38,10 @@ add_library(tinyvision_application
 target_include_directories(tinyvision_application PUBLIC include)
 target_link_libraries(tinyvision_application PUBLIC tinyvision_core PNG::PNG JPEG::JPEG)
 target_compile_options(tinyvision_application PRIVATE -Wall -Wextra -Wpedantic)
+if(TINYVISION_WITH_GDAL AND GDAL_FOUND)
+    target_link_libraries(tinyvision_application PUBLIC GDAL::GDAL)
+    target_compile_definitions(tinyvision_application PUBLIC TINYVISION_WITH_GDAL=1)
+endif()
 
 add_executable(tinyvision src/main.cpp)
 target_link_libraries(tinyvision PRIVATE tinyvision_core)
@@ -76,6 +88,10 @@ add_test(NAME multichannel_test COMMAND multichannel_test)
 add_executable(geo_test tests/geo_test.cpp)
 target_link_libraries(geo_test PRIVATE tinyvision_application)
 add_test(NAME geo_test COMMAND geo_test)
+
+add_executable(gdal_source_test tests/gdal_source_test.cpp)
+target_link_libraries(gdal_source_test PRIVATE tinyvision_application)
+add_test(NAME gdal_source_test COMMAND gdal_source_test)
 
 add_executable(geo_dense_test tests/geo_dense_test.cpp)
 target_link_libraries(geo_dense_test PRIVATE tinyvision_application)

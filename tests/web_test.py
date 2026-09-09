@@ -572,8 +572,56 @@ def main():
                     assert s2_cls_resp["success"] is True
                     assert s2_cls_resp["predicted"] in ("vegetacao", "solo")
 
+                # Dense classification must consume the same native B2/B3/B4/B8 schema as training.
+                s2_dense_payload = json.dumps({
+                    "model_name": s2_model_name,
+                    "image_path": s2_desc["preview_path"],
+                    "bands": s2_desc["bands"],
+                    "stride": 8,
+                    "threads": 2,
+                    "confidence": 0.0,
+                    "margin": 0.0,
+                    "is_sentinel_10m": True,
+                }).encode("utf-8")
+                req = urllib.request.Request(
+                    f"{base_url}/api/dense_map",
+                    data=s2_dense_payload,
+                    headers={"Content-Type": "application/json"},
+                    method="POST"
+                )
+                with urllib.request.urlopen(req) as res:
+                    assert res.status == 200
+                    s2_dense_resp = json.loads(res.read().decode("utf-8"))
+                    assert s2_dense_resp["success"] is True
+                    s2_run_id = s2_dense_resp["run_id"]
+                    s2_run_meta = s2_dense_resp["metadata"]
+                    assert s2_run_meta["input_modality"] == "SENTINEL2_MULTIBAND"
+                    assert s2_run_meta["input_channels"] == 4
+                    assert s2_run_meta["source_width"] == 32
+                    assert s2_run_meta["source_height"] == 32
+                    assert s2_run_meta["decision_count"] == 16
+
+                # A 256-input model must reject an RGB-only dense source.
+                invalid_s2_dense_payload = json.dumps({
+                    "model_name": s2_model_name,
+                    "image_path": s2_desc["preview_path"],
+                    "stride": 8,
+                }).encode("utf-8")
+                req = urllib.request.Request(
+                    f"{base_url}/api/dense_map",
+                    data=invalid_s2_dense_payload,
+                    headers={"Content-Type": "application/json"},
+                    method="POST"
+                )
+                try:
+                    urllib.request.urlopen(req)
+                    raise AssertionError("Sentinel model accepted an RGB-only dense source")
+                except urllib.error.HTTPError as exc:
+                    assert exc.code == 400
+
                 # Clean up Sentinel-2 artifacts
                 shutil.rmtree(s2_ds_dir, ignore_errors=True)
+                shutil.rmtree(REPO_ROOT / ".tinyvision" / "runs" / s2_run_id, ignore_errors=True)
                 s2_model_file = REPO_ROOT / ".tinyvision" / "models" / f"{s2_model_name}.tlv"
                 if s2_model_file.exists():
                     s2_model_file.unlink()
@@ -589,4 +637,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
