@@ -1,6 +1,7 @@
 #include "tinyvision/dense.hpp"
 #include "tinyvision/h3_index.hpp"
 #include "tinyvision/image.hpp"
+#include "tinyvision/provenance.hpp"
 
 #include <algorithm>
 #include <array>
@@ -673,6 +674,10 @@ void export_dense_map(const DenseMapResult& result,
     js << "    }\n"
        << "  }\n"
        << "}\n";
+    js.close();
+    if (!js) {
+        throw std::runtime_error("failed to finalize " + json_path.string());
+    }
 
     // 4. Export class_map.png
     RgbImage class_map;
@@ -788,6 +793,37 @@ void export_dense_map(const DenseMapResult& result,
                                       output_dir / "classification_h3.csv");
         }
     }
+
+    // 9. Export provenance from the actual model, source, run and artifacts.
+    const std::string run_id = "run:" + output_dir.filename().string();
+    const std::string model_id = "model:" + (model_sha.empty() ? model_path.filename().string() : model_sha);
+    const std::string source_id = "source:" + (source_sha.empty() ? source_path.filename().string() : source_sha);
+    ProvenanceGraph provenance;
+    provenance.add_node({source_id, NodeType::SOURCE, source_path.filename().string(), source_sha,
+                         {{"path", source_path.string()}, {"crs", result.metadata.has_geo ? result.metadata.crs : "NOT_AVAILABLE"}}});
+    provenance.add_node({model_id, NodeType::MODEL, model_path.filename().string(), model_sha,
+                         {{"input_modality", modality_to_string(model.schema.modality)},
+                          {"input_channels", std::to_string(model.schema.channels)}}});
+    provenance.add_node({run_id, NodeType::CLASSIFICATION_RUN, output_dir.filename().string(), "",
+                         {{"stride", std::to_string(result.config.stride)},
+                          {"decision_count", std::to_string(result.total_decisions)}}});
+    provenance.add_edge({run_id, model_id, EdgeType::EVALUATED_ON, timestamp_buf, {}});
+    provenance.add_edge({run_id, source_id, EdgeType::DERIVED_FROM, timestamp_buf, {}});
+
+    const std::vector<std::string> artifact_names{
+        "classification.csv", "decisions.bin", "run.json", "class_map.png",
+        "confidence.png", "margin.png", "overlay.png", "class_map.tif",
+        "confidence.tif", "margin.tif", "classification_h3.csv"};
+    for (const auto& artifact_name : artifact_names) {
+        const auto artifact_path = output_dir / artifact_name;
+        if (!std::filesystem::is_regular_file(artifact_path)) continue;
+        const std::string artifact_id = "artifact:" + output_dir.filename().string() + ":" + artifact_name;
+        provenance.add_node({artifact_id, NodeType::ARTIFACT, artifact_name,
+                             compute_file_sha256(artifact_path), {{"path", artifact_path.string()}}});
+        provenance.add_edge({artifact_id, run_id, EdgeType::PRODUCED_BY, timestamp_buf, {}});
+    }
+    provenance.export_json(output_dir / "provenance.json");
+    provenance.export_jsonl(output_dir / "evidence.jsonl");
 }
 
 } // namespace tinyvision

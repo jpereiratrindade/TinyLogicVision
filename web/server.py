@@ -286,6 +286,162 @@ def is_safe_path(target_path: Path, allowed_roots=None) -> bool:
         return False
 
 
+def write_provenance_graph(directory: Path, nodes, edges,
+                           json_name="provenance.json", evidence_name="evidence.jsonl"):
+    """Persist an actual lineage graph and its append-friendly JSONL representation."""
+    graph = {"schema_version": 1, "nodes": nodes, "edges": edges}
+    graph_path = directory / json_name
+    temp_path = directory / f".{json_name}.{uuid.uuid4().hex}.tmp"
+    with open(temp_path, "w", encoding="utf-8") as f:
+        json.dump(graph, f, indent=2, ensure_ascii=False)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(temp_path, graph_path)
+
+    evidence_path = directory / evidence_name
+    evidence_temp = directory / f".{evidence_name}.{uuid.uuid4().hex}.tmp"
+    with open(evidence_temp, "w", encoding="utf-8") as f:
+        for node in nodes:
+            f.write(json.dumps({"kind": "node", **node}, ensure_ascii=False) + "\n")
+        for edge in edges:
+            f.write(json.dumps({"kind": "edge", **edge}, ensure_ascii=False) + "\n")
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(evidence_temp, evidence_path)
+
+
+def build_dataset_provenance(dataset_dir: Path, meta):
+    dataset_id = str(meta["dataset_id"])
+    created_at = str(meta.get("created_at", ""))
+    source = meta.get("source_image", {})
+    source_hash = str(source.get("sha256", ""))
+    source_id = f"source:{source_hash or source.get('name', 'unknown')}"
+    dataset_node_id = f"dataset:{dataset_id}"
+    nodes = [{
+        "id": source_id, "type": "Source", "name": str(source.get("name", "source")),
+        "hash_sha256": source_hash, "metadata": {"path": str(source.get("path", ""))},
+    }, {
+        "id": dataset_node_id, "type": "Dataset", "name": dataset_id,
+        "hash_sha256": compute_file_sha256(dataset_dir / "dataset.json"),
+        "metadata": {"total_patches": str(meta.get("total_patches", 0))},
+    }]
+    edges = [{"source": dataset_node_id, "target": source_id, "type": "derived_from",
+              "timestamp": created_at, "metadata": {}}]
+
+    roi_nodes = set()
+    for patch in meta.get("patches", []):
+        roi_name = str(patch.get("roi_id", "unassigned"))
+        roi_id = f"roi:{dataset_id}:{roi_name}"
+        if roi_id not in roi_nodes:
+            roi_nodes.add(roi_id)
+            nodes.append({"id": roi_id, "type": "ROI", "name": roi_name, "hash_sha256": "",
+                          "metadata": {"class": str(patch.get("class", "")),
+                                       "split": str(patch.get("split", ""))}})
+            edges.append({"source": roi_id, "target": source_id, "type": "derived_from",
+                          "timestamp": created_at, "metadata": {}})
+        patch_id = f"patch:{dataset_id}:{patch.get('filename', '')}"
+        nodes.append({"id": patch_id, "type": "Patch", "name": str(patch.get("filename", "")),
+                      "hash_sha256": str(patch.get("sha256", "")),
+                      "metadata": {"class": str(patch.get("class", "")),
+                                   "split": str(patch.get("split", "")),
+                                   "x": str(patch.get("x", "")), "y": str(patch.get("y", ""))}})
+        edges.append({"source": patch_id, "target": roi_id, "type": "sampled_from",
+                      "timestamp": created_at, "metadata": {}})
+        edges.append({"source": patch_id, "target": dataset_node_id, "type": "member_of",
+                      "timestamp": created_at, "metadata": {"split": str(patch.get("split", ""))}})
+    write_provenance_graph(dataset_dir, nodes, edges)
+
+
+def collect_workspace_provenance():
+    nodes_by_id = {}
+    edges_by_key = {}
+    graph_paths = [*DATASETS_DIR.glob("*/provenance.json"),
+                   *MODELS_DIR.glob("*.provenance.json"),
+                   *RUNS_DIR.glob("*/provenance.json")]
+    for graph_path in sorted(graph_paths):
+        try:
+            with open(graph_path, "r", encoding="utf-8") as f:
+                graph = json.load(f)
+            for node in graph.get("nodes", []):
+                if isinstance(node, dict) and node.get("id"):
+                    nodes_by_id[str(node["id"])] = node
+            for edge in graph.get("edges", []):
+                if not isinstance(edge, dict):
+                    continue
+                key = (str(edge.get("source", "")), str(edge.get("target", "")),
+                       str(edge.get("type", "")), str(edge.get("timestamp", "")))
+                if key[0] and key[1]:
+                    edges_by_key[key] = edge
+        except (OSError, ValueError, TypeError):
+            continue
+
+    # Read-only compatibility for artifacts created before provenance sidecars
+    # existed. Every fallback node below is derived from a real workspace file.
+    for dataset_meta_path in sorted(DATASETS_DIR.glob("*/dataset.json")):
+        try:
+            with open(dataset_meta_path, "r", encoding="utf-8") as f:
+                meta = json.load(f)
+            dataset_id = str(meta.get("dataset_id") or dataset_meta_path.parent.name)
+            source = meta.get("source_image", {})
+            source_hash = str(source.get("sha256", ""))
+            source_id = f"source:{source_hash or source.get('name', 'unknown')}"
+            nodes_by_id.setdefault(source_id, {
+                "id": source_id, "type": "Source", "name": str(source.get("name", "source")),
+                "hash_sha256": source_hash, "metadata": {"path": str(source.get("path", ""))}})
+            dataset_node_id = f"dataset:{dataset_id}"
+            nodes_by_id.setdefault(dataset_node_id, {
+                "id": dataset_node_id, "type": "Dataset", "name": dataset_id,
+                "hash_sha256": compute_file_sha256(dataset_meta_path),
+                "metadata": {"total_patches": str(meta.get("total_patches", 0))}})
+            key = (dataset_node_id, source_id, "derived_from", str(meta.get("created_at", "")))
+            edges_by_key.setdefault(key, {"source": key[0], "target": key[1], "type": key[2],
+                                          "timestamp": key[3], "metadata": {}})
+        except (OSError, ValueError, TypeError):
+            continue
+
+    for model_path in sorted(MODELS_DIR.glob("*.tlv")):
+        model_hash = compute_file_sha256(model_path)
+        model_id = f"model:{model_hash or model_path.name}"
+        nodes_by_id.setdefault(model_id, {"id": model_id, "type": "Model", "name": model_path.name,
+                                          "hash_sha256": model_hash, "metadata": {"path": str(model_path)}})
+
+    for run_meta_path in sorted(RUNS_DIR.glob("*/run.json")):
+        try:
+            with open(run_meta_path, "r", encoding="utf-8") as f:
+                meta = json.load(f)
+            run_name = str(meta.get("run_id") or run_meta_path.parent.name)
+            run_id = f"run:{run_name}"
+            nodes_by_id.setdefault(run_id, {"id": run_id, "type": "ClassificationRun", "name": run_name,
+                                             "hash_sha256": compute_file_sha256(run_meta_path),
+                                             "metadata": {"decision_count": str(meta.get("decision_count", ""))}})
+            model_hash = str(meta.get("model_sha256", ""))
+            if model_hash:
+                model_id = f"model:{model_hash}"
+                nodes_by_id.setdefault(model_id, {"id": model_id, "type": "Model",
+                                                   "name": Path(str(meta.get("model_path", "model"))).name,
+                                                   "hash_sha256": model_hash, "metadata": {}})
+                key = (run_id, model_id, "evaluated_on", str(meta.get("timestamp", "")))
+                edges_by_key.setdefault(key, {"source": key[0], "target": key[1], "type": key[2],
+                                              "timestamp": key[3], "metadata": {}})
+            for artifact_path in sorted(run_meta_path.parent.iterdir()):
+                if not artifact_path.is_file() or artifact_path.name.startswith("."):
+                    continue
+                artifact_id = f"artifact:{run_name}:{artifact_path.name}"
+                artifact_hash = compute_file_sha256(artifact_path) if artifact_path.stat().st_size <= 64 * 1024 * 1024 else ""
+                nodes_by_id.setdefault(artifact_id, {"id": artifact_id, "type": "Artifact",
+                                                      "name": artifact_path.name,
+                                                      "hash_sha256": artifact_hash,
+                                                      "metadata": {"path": str(artifact_path)}})
+                key = (artifact_id, run_id, "produced_by", str(meta.get("timestamp", "")))
+                edges_by_key.setdefault(key, {"source": key[0], "target": key[1], "type": key[2],
+                                              "timestamp": key[3], "metadata": {}})
+        except (OSError, ValueError, TypeError):
+            continue
+    return {"success": True, "schema_version": 1,
+            "nodes": list(nodes_by_id.values()), "edges": list(edges_by_key.values()),
+            "graph_files": len(graph_paths)}
+
+
 class TinyVisionRequestHandler(http.server.BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         # Keep server log clean
@@ -319,6 +475,8 @@ class TinyVisionRequestHandler(http.server.BaseHTTPRequestHandler):
             self.serve_file(STATIC_DIR / "app.js", "application/javascript")
         elif path == "/api/status":
             self.handle_api_status()
+        elif path == "/api/provenance":
+            self.send_json(collect_workspace_provenance())
         elif path == "/api/image":
             self.handle_api_image(query)
         elif path.startswith("/api/runs/"):
@@ -787,6 +945,8 @@ class TinyVisionRequestHandler(http.server.BaseHTTPRequestHandler):
         with open(dataset_dir / "dataset.json", "w", encoding="utf-8") as f:
             json.dump(meta, f, indent=2)
 
+        build_dataset_provenance(dataset_dir, meta)
+
         # Save copy to manifests/
         with open(MANIFESTS_DIR / f"{dataset_name}_manifest.json", "w", encoding="utf-8") as f:
             json.dump(meta, f, indent=2)
@@ -884,6 +1044,34 @@ class TinyVisionRequestHandler(http.server.BaseHTTPRequestHandler):
                         "train_acc": float(m.group(2)),
                         "dev_acc": float(m.group(3)),
                     })
+
+        if success:
+            timestamp = datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
+            model_hash = compute_file_sha256(model_path)
+            dataset_meta_path = dataset_dir / "dataset.json"
+            dataset_hash = compute_file_sha256(dataset_meta_path)
+            training_id = f"training:{run_id}"
+            model_id = f"model:{model_hash or model_filename}"
+            dataset_id = f"dataset:{dataset_name}"
+            nodes = [
+                {"id": dataset_id, "type": "Dataset", "name": dataset_name,
+                 "hash_sha256": dataset_hash, "metadata": {"path": str(dataset_dir)}},
+                {"id": training_id, "type": "TrainingRun", "name": run_id,
+                 "hash_sha256": compute_file_sha256(run_log_path),
+                 "metadata": {"architecture": str(parsed_metrics.get("architecture") or ""),
+                              "parameter_count": str(parsed_metrics.get("parameter_count") or "")}},
+                {"id": model_id, "type": "Model", "name": model_filename,
+                 "hash_sha256": model_hash, "metadata": {"path": str(model_path)}},
+            ]
+            edges = [
+                {"source": training_id, "target": dataset_id, "type": "trained_on",
+                 "timestamp": timestamp, "metadata": {}},
+                {"source": model_id, "target": training_id, "type": "produced_by",
+                 "timestamp": timestamp, "metadata": {}},
+            ]
+            write_provenance_graph(
+                MODELS_DIR, nodes, edges,
+                f"{model_path.stem}.provenance.json", f"{model_path.stem}.evidence.jsonl")
 
         self.send_json(parsed_metrics, status=200 if success else 400)
 
@@ -1167,6 +1355,7 @@ class TinyVisionRequestHandler(http.server.BaseHTTPRequestHandler):
             "confidence.tif": "image/tiff",
             "margin.tif": "image/tiff",
             "provenance.json": "application/json",
+            "evidence.jsonl": "application/x-ndjson; charset=utf-8",
             "decisions.bin": "application/octet-stream",
             "classification_h3.csv": "text/csv; charset=utf-8",
         }

@@ -1861,29 +1861,62 @@ function renderBrowserItems() {
   }
 }
 
-function renderRitProvenance() {
+async function renderRitProvenance() {
   if (!el.ritNodesList) return;
-  el.ritNodesList.innerHTML = '';
+  el.ritNodesList.textContent = 'Carregando proveniência registrada...';
+  try {
+    const response = await fetch('/api/provenance');
+    const graph = await response.json();
+    if (!graph.success) throw new Error(graph.error || 'Falha ao carregar proveniência');
+    el.ritNodesList.innerHTML = '';
+    const nodes = graph.nodes || [];
+    const edges = graph.edges || [];
+    if (nodes.length === 0) {
+      el.ritNodesList.textContent = 'Nenhum provenance.json real foi registrado neste workspace.';
+      return;
+    }
 
-  const flowNodes = [
-    { type: 'source', label: state.imageMeta ? state.imageMeta.filename : 'scene_sentinel2_10m.png', hash: state.imageMeta ? state.imageMeta.sha256.substring(0, 8) : 'a1b2c3d4' },
-    { type: 'roi', label: `${state.rois.length} ROIs demarcadas`, hash: 'disjoint_splits' },
-    { type: 'patch', label: `${state.patches.length} Patches 8x8`, hash: 'tvp_v1' },
-    { type: 'dataset', label: state.datasets.length > 0 ? state.datasets[0].dataset_id : 'dataset_cerrado_v1', hash: 'manifest_v2' },
-    { type: 'model', label: state.models.length > 0 ? state.models[0].name : 'model_sentinel_10m.tlv', hash: 'mlp_256_24_3' },
-    { type: 'run', label: 'Tiled Dense Map Run', hash: 'compact_idx_36b' },
-    { type: 'artifact', label: 'GeoTIFF / H3 / CSV Outputs', hash: 'provenance_rit' },
-  ];
+    const typeOrder = ['Source', 'ROI', 'Patch', 'Dataset', 'TrainingRun', 'Model', 'ClassificationRun', 'Artifact'];
+    nodes.sort((a, b) => typeOrder.indexOf(a.type) - typeOrder.indexOf(b.type) || String(a.name).localeCompare(String(b.name)));
+    const nodeNames = new Map(nodes.map((node) => [node.id, node.name || node.id]));
+    nodes.slice(0, 500).forEach((node) => {
+      const row = document.createElement('div');
+      row.className = 'rit-node-row';
 
-  flowNodes.forEach((n, idx) => {
-    const row = document.createElement('div');
-    row.className = 'rit-node-row';
-    row.innerHTML = `
-      <span class="rit-tag tag-${n.type}">${n.type.toUpperCase()}</span>
-      <strong>${n.label}</strong>
-      <span class="mono text-dim">[${n.hash}]</span>
-      ${idx < flowNodes.length - 1 ? '<span class="rit-arrow">➔</span>' : ''}
-    `;
-    el.ritNodesList.appendChild(row);
-  });
+      const type = document.createElement('span');
+      const cssType = ({ TrainingRun: 'run', ClassificationRun: 'run' }[node.type] || String(node.type).toLowerCase());
+      type.className = `rit-tag tag-${cssType}`;
+      type.textContent = node.type || 'Unknown';
+      row.appendChild(type);
+
+      const label = document.createElement('strong');
+      label.textContent = node.name || node.id;
+      row.appendChild(label);
+
+      if (node.hash_sha256) {
+        const hash = document.createElement('span');
+        hash.className = 'mono text-dim';
+        hash.textContent = `[${String(node.hash_sha256).slice(0, 12)}]`;
+        row.appendChild(hash);
+      }
+
+      const relationships = edges.filter((edge) => edge.source === node.id).slice(0, 4);
+      if (relationships.length) {
+        const relation = document.createElement('span');
+        relation.className = 'rit-arrow';
+        relation.textContent = relationships.map((edge) =>
+          `➔ ${edge.type} → ${nodeNames.get(edge.target) || edge.target}`).join(' | ');
+        row.appendChild(relation);
+      }
+      el.ritNodesList.appendChild(row);
+    });
+    if (nodes.length > 500) {
+      const note = document.createElement('div');
+      note.className = 'help-text';
+      note.textContent = `${nodes.length - 500} nós adicionais permanecem registrados nos arquivos provenance.json.`;
+      el.ritNodesList.appendChild(note);
+    }
+  } catch (error) {
+    el.ritNodesList.textContent = `Proveniência indisponível: ${error.message}`;
+  }
 }

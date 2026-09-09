@@ -274,13 +274,22 @@ def main():
             ds_dir = REPO_ROOT / ".tinyvision" / "datasets" / dataset_name
             manifest_csv = ds_dir / "manifest.csv"
             dataset_json = ds_dir / "dataset.json"
+            dataset_provenance = ds_dir / "provenance.json"
+            dataset_evidence = ds_dir / "evidence.jsonl"
             assert manifest_csv.is_file(), "manifest.csv missing"
             assert dataset_json.is_file(), "dataset.json missing"
+            assert dataset_provenance.is_file(), "dataset provenance.json missing"
+            assert dataset_evidence.is_file(), "dataset evidence.jsonl missing"
 
             with open(dataset_json, "r", encoding="utf-8") as f:
                 meta = json.load(f)
                 assert meta["is_sentinel_10m"] is True
                 assert len(meta["patches"]) == 12
+            with open(dataset_provenance, "r", encoding="utf-8") as f:
+                provenance = json.load(f)
+                node_types = {node["type"] for node in provenance["nodes"]}
+                assert {"Source", "ROI", "Patch", "Dataset"}.issubset(node_types)
+                assert any(edge["type"] == "sampled_from" for edge in provenance["edges"])
 
             # 5. Test Training through API (runs ./bin/tinyvision train)
             print("Testing model training via web API...")
@@ -301,6 +310,12 @@ def main():
                 train_resp = json.loads(res.read().decode("utf-8"))
                 assert train_resp["success"] is True
                 assert train_resp["parameter_count"] == 4707  # 3 classes: 192->24->3
+            model_provenance = REPO_ROOT / ".tinyvision" / "models" / f"{model_name}.provenance.json"
+            assert model_provenance.is_file(), "model training provenance missing"
+            with open(model_provenance, "r", encoding="utf-8") as f:
+                training_graph = json.load(f)
+                assert any(node["type"] == "TrainingRun" for node in training_graph["nodes"])
+                assert any(edge["type"] == "trained_on" for edge in training_graph["edges"])
 
             # 6. Test Classification via API (runs ./bin/tinyvision classify)
             print("Testing model classification via web API...")
@@ -380,7 +395,8 @@ def main():
 
             # Verify artifact delivery via HTTP and parse run.json semantics
             print("Verifying map artifacts delivery over HTTP and contract in run.json...")
-            for art in ("class_map.png", "confidence.png", "margin.png", "overlay.png", "run.json", "classification.csv"):
+            for art in ("class_map.png", "confidence.png", "margin.png", "overlay.png", "run.json",
+                        "classification.csv", "provenance.json", "evidence.jsonl"):
                 with urllib.request.urlopen(f"{base_url}/api/runs/{run_id}/{art}") as res:
                     assert res.status == 200
                     data = res.read()
@@ -398,6 +414,16 @@ def main():
                         assert len(run_meta["palette"]["classes"]) == 3
                         assert run_meta["palette"]["uncertain"]["color"] == "#808080"
                         assert run_meta["geospatial"]["available"] is False
+
+            with urllib.request.urlopen(f"{base_url}/api/provenance") as res:
+                assert res.status == 200
+                workspace_graph = json.loads(res.read().decode("utf-8"))
+                assert workspace_graph["success"] is True
+                node_types = {node["type"] for node in workspace_graph["nodes"]}
+                assert {"Dataset", "TrainingRun", "Model", "ClassificationRun", "Artifact"}.issubset(node_types)
+                serialized_graph = json.dumps(workspace_graph)
+                assert "a1b2c3d4" not in serialized_graph
+                assert "mlp_256_24_3" not in serialized_graph
 
             # Verify point inspection endpoint
             print("Verifying point inspection endpoint...")
@@ -451,6 +477,10 @@ def main():
             model_file = REPO_ROOT / ".tinyvision" / "models" / f"{model_name}.tlv"
             if model_file.exists():
                 model_file.unlink()
+            for suffix in (".provenance.json", ".evidence.jsonl"):
+                sidecar = REPO_ROOT / ".tinyvision" / "models" / f"{model_name}{suffix}"
+                if sidecar.exists():
+                    sidecar.unlink()
             async_model = REPO_ROOT / ".tinyvision" / "models" / f"async_{model_name}.tlv"
             if async_model.exists():
                 async_model.unlink()
@@ -646,6 +676,10 @@ def main():
                 s2_model_file = REPO_ROOT / ".tinyvision" / "models" / f"{s2_model_name}.tlv"
                 if s2_model_file.exists():
                     s2_model_file.unlink()
+                for suffix in (".provenance.json", ".evidence.jsonl"):
+                    sidecar = REPO_ROOT / ".tinyvision" / "models" / f"{s2_model_name}{suffix}"
+                    if sidecar.exists():
+                        sidecar.unlink()
 
             except ImportError:
                 print("Note: osgeo.gdal or numpy not available in this test pass, skipping S2 multiband step")
