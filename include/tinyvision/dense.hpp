@@ -56,7 +56,7 @@ struct DenseMapConfig {
     std::size_t stride{1}; // 1, 2, 4, 8
     double confidence_threshold{0.0};
     double margin_threshold{0.0};
-    bool sentinel_native_10m{false};
+    bool sentinel_nominal_10m{false}; // User-declared nominal 10m/px scale (unverified metadata)
 };
 
 struct DenseMapResult {
@@ -71,6 +71,12 @@ struct DenseMapResult {
     DenseMapConfig config;
     PaletteConfig palette;
 };
+
+// Extracts exactly 192 normalized RGB values in scanline order without interpolation:
+// [origin_x, origin_x + 7] x [origin_y, origin_y + 7], normalized by dividing byte values by 255.0.
+std::vector<double> extract_rgb_input_vector(const RgbImage& image,
+                                             std::size_t origin_x,
+                                             std::size_t origin_y);
 
 DenseMapResult classify_dense(const ApplicationModel& model,
                               const RgbImage& image,

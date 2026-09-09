@@ -12,10 +12,10 @@ Dataset authoring              READY — manifest.csv, dataset.json, and spatial
 ROI-level split integrity      READY — 1 ROI = 1 Split and backend spatial disjointness validation across splits
 Dense patch classification     READY — in-memory C++ sliding window classification engine
 Uncertainty & margin maps      READY — top-1 probability, top-1/top-2 margin, and threshold-based UNCERTAIN
-Single overlay authority       READY — C++ canonical overlay.png in source image space (W×H)
+Single overlay authority       READY — C++ canonical overlay.png centered on decisions in source image space (W×H)
 Grid rasters geometry          READY — class_map.png, confidence.png, margin.png in grid space (Nx×Ny)
 Canonical palette authority    READY — single palette defined in C++ engine and registered in run.json
-Sentinel nominal resolution    READY — 1px=10m nominal scale context tagging (80x80m support)
+Nominal resolution scale       READY — operator-declared nominal 10m/px scale (80x80m support)
 NATURAL APP PROBE              EXPLORATORY / NOT CLAIM-BEARING
 SYNTHETIC TEST                 SEALED / NOT_EVALUATED
 H3 integration                 PLANNED / NOT IMPLEMENTED
@@ -42,18 +42,19 @@ H3 integration                 PLANNED / NOT IMPLEMENTED
   training, classification, evaluation, dense mapping, and verification with full path independence
   and CLI test coverage;
 - a local Web GUI (`./bin/tinyvision web`) executing on `127.0.0.1` enabling interactive
-  image inspection, Sentinel 10m nominal vs display resolution tagging, strict ROI-level split integrity annotation,
+  image inspection, nominal 10m/px resolution declaration vs display resolution tagging, strict ROI-level split integrity annotation,
   exact 8x8 patch extraction with provenance manifest generation, and integrated training,
   classification, dense mapping with interactive spatial inspection, and split evaluation;
 - in-memory C++ dense classification engine (`tinyvision map`) sliding an exact 8x8 window
-  without interpolation, with configurable strides (1, 2, 4, 8), producing `classification.csv`, `run.json`,
-  `class_map.png` (grid space), `confidence.png` (grid space), `margin.png` (grid space), and `overlay.png` (source image space)
+  without interpolation (`EXACT_RGB_INPUT_VECTOR`), with configurable strides (1, 2, 4, 8), producing `classification.csv`, `run.json`,
+  `class_map.png` (grid space), `confidence.png` (grid space), `margin.png` (grid space), and `overlay.png` (source image space centered on decisions)
   with sub-millisecond execution per window;
 - formal `DenseDecision` spatial semantics separating support window $[x, x+7] \times [y, y+7]$, geometric center $(x+3.5, y+3.5)$,
   grid coordinates $(gx, gy)$, and visual display cell;
 - single palette authority registered in `run.json` and consumed by GUI;
-- single overlay authority produced directly by C++ engine;
-- backend enforcement of ROI-level split integrity (1 ROI = 1 Split) and disjoint patch validation across splits.
+- single overlay authority produced directly by C++ engine with centered decision cells;
+- direct witness of `EXACT_RGB_INPUT_VECTOR` extraction without interpolation;
+- backend enforcement of `ROI-LEVEL SPLIT INTEGRITY + NON-OVERLAPPING 8x8 SAMPLE SUPPORTS ACROSS SPLITS`.
 
 
 

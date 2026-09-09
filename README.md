@@ -73,8 +73,8 @@ cmake --build build
 
 ### 3. Conceito da Classificação Espacial Densa
 
-- **Suporte Contextual (Support Window)**: $8 \times 8$ pixels ($192$ entradas RGB scanline $[x, x+7] \times [y, y+7]$ extraídas sem interpolação).
-- **Escala Nominal Sentinel**: $80 \times 80\text{ m}$ nominais quando a fonte é pixel nativo Sentinel-2 ($10\text{ m/px}$).
+- **Suporte Contextual (Support Window)**: $8 \times 8$ pixels ($192$ entradas RGB scanline $[x, x+7] \times [y, y+7]$ extraídas diretamente sem interpolação como `EXACT_RGB_INPUT_VECTOR`).
+- **Resolução Nominal Declarada**: $80 \times 80\text{ m}$ nominais quando declarada pelo operador como escala nominal Sentinel-2 ($10\text{ m/px}$). O sistema não valida metadata de satélite independente.
 - **Espaçamento (Stride)**: Espaçamento entre decisões consecutivas na grade discreta (não altera o tamanho do suporte $8 \times 8$).
   - Stride 1: decisão a cada pixel usando suporte de $8 \times 8$.
   - Stride 2: decisão a cada 2 pixels.
@@ -88,10 +88,12 @@ cmake --build build
   - *Regra fundamental*: $\text{SUPPORT} \neq \text{DECISION POINT} \neq \text{DISPLAY CELL}$.
 - **Geometria dos Artefatos**:
   - `class_map.png`, `confidence.png` (Probabilidade Top-1) e `margin.png` (Margem Top-1 − Top-2) são rasters no **GRID SPACE** ($N_x \times N_y$), onde cada pixel é uma decisão.
-  - `overlay.png` é gerado pelo engine C++ como **autoridade única canônica** no espaço da imagem fonte ($W \times H$), projetando cada decisão em sua célula de espaçamento de stride.
+  - `overlay.png` é gerado pelo engine C++ como **autoridade única canônica** no espaço da imagem fonte ($W \times H$), projetando cada decisão em sua célula $\text{stride} \times \text{stride}$ centrada na âncora de exibição: $[\text{display\_x} - \lfloor\text{stride}/2\rfloor, \text{display\_y} - \lfloor\text{stride}/2\rfloor]$ com clipping determinístico nas bordas.
 - **Interpretação de Incerteza**:
   - $p_1 = \text{top-1 probability}$, $p_2 = \text{top-2 probability}$, $\text{margin} = p_1 - p_2$.
   - Status `UNCERTAIN` significa `UNCERTAIN_BY_CONFIGURED_THRESHOLD` ($p_1 < \text{confidence\_threshold}$ ou $\text{margin} < \text{margin\_threshold}$), sem alegar calibração probabilística ou incerteza epistemológica.
+- **Integridade dos Splits**:
+  - Validação estrita de `ROI-LEVEL SPLIT INTEGRITY + NON-OVERLAPPING 8x8 SAMPLE SUPPORTS ACROSS SPLITS` em todos os geradores de dataset. Não se alega independência espacial global irrestrita além dos mecanismos implementados.
 
 ### 4. Papel Futuro do H3 (Preparação Arquitetural)
 

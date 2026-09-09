@@ -197,7 +197,7 @@ class TinyVisionRequestHandler(http.server.BaseHTTPRequestHandler):
         else:
             self.send_error_json("Endpoint not found", 404)
 
-    def serve_file(self, file_path: Path, content_type: str):
+    def serve_file(self, file_path: Path, content_type: str, download_filename: str = None):
         if not file_path.is_file():
             self.send_error_json("File not found", 404)
             return
@@ -206,6 +206,8 @@ class TinyVisionRequestHandler(http.server.BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(content)))
+        if download_filename:
+            self.send_header("Content-Disposition", f'attachment; filename="{download_filename}"')
         self.end_headers()
         self.wfile.write(content)
 

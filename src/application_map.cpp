@@ -15,7 +15,7 @@ int main(int argc, char** argv) {
                   << "  --stride 1|2|4|8      Decision spacing (default: 1)\n"
                   << "  --confidence FLOAT    Minimum top-1 probability threshold [0.0..1.0] (default: 0.0)\n"
                   << "  --margin FLOAT        Minimum margin (top1 - top2) threshold [0.0..1.0] (default: 0.0)\n"
-                  << "  --sentinel-10m        Mark source as native Sentinel-2 10m pixels (80m context, stride*10m spacing)\n";
+                  << "  --sentinel-10m        Declare nominal 10m/pixel resolution (operator-declared scale; context=80m, spacing=stride*10m)\n";
         return 2;
     }
 
@@ -35,7 +35,7 @@ int main(int argc, char** argv) {
             } else if (arg == "--margin" && i + 1 < argc) {
                 config.margin_threshold = std::stod(argv[++i]);
             } else if (arg == "--sentinel-10m") {
-                config.sentinel_native_10m = true;
+                config.sentinel_nominal_10m = true;
             } else {
                 std::cerr << "tinyvision_map: unknown option " << arg << '\n';
                 return 2;
@@ -61,8 +61,8 @@ int main(int argc, char** argv) {
                   << "confidence_threshold=" << std::fixed << std::setprecision(4) << config.confidence_threshold
                   << " margin_threshold=" << config.margin_threshold << '\n';
 
-        if (config.sentinel_native_10m) {
-            std::cout << "spatial_mode=SENTINEL_NATIVE_10M\n"
+        if (config.sentinel_nominal_10m) {
+            std::cout << "spatial_mode=SENTINEL_NOMINAL_10M_DECLARED\n"
                       << "nominal_context_m=80\n"
                       << "nominal_decision_spacing_m=" << (config.stride * 10) << '\n';
         } else {

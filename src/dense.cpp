@@ -162,6 +162,29 @@ PaletteConfig get_canonical_palette(const std::vector<std::string>& class_names)
     return config;
 }
 
+std::vector<double> extract_rgb_input_vector(const RgbImage& image,
+                                             std::size_t origin_x,
+                                             std::size_t origin_y) {
+    if (origin_x + 8 > image.width || origin_y + 8 > image.height) {
+        throw std::out_of_range("8x8 patch exceeds image boundaries");
+    }
+    if (image.pixels.size() != image.width * image.height * 3) {
+        throw std::invalid_argument("invalid RGB image byte count");
+    }
+
+    std::vector<double> window(192);
+    for (std::size_t wy = 0; wy < 8; ++wy) {
+        const std::size_t src_row = ((origin_y + wy) * image.width + origin_x) * 3;
+        const std::size_t dst_row = (wy * 8) * 3;
+        for (std::size_t wx = 0; wx < 8; ++wx) {
+            window[dst_row + wx * 3 + 0] = static_cast<double>(image.pixels[src_row + wx * 3 + 0]) / 255.0;
+            window[dst_row + wx * 3 + 1] = static_cast<double>(image.pixels[src_row + wx * 3 + 1]) / 255.0;
+            window[dst_row + wx * 3 + 2] = static_cast<double>(image.pixels[src_row + wx * 3 + 2]) / 255.0;
+        }
+    }
+    return window;
+}
+
 DenseMapResult classify_dense(const ApplicationModel& model,
                               const RgbImage& image,
                               const DenseMapConfig& config) {
@@ -189,25 +212,14 @@ DenseMapResult classify_dense(const ApplicationModel& model,
     result.palette = get_canonical_palette(model.class_names);
     result.decisions.resize(total_decisions);
 
-    std::vector<double> window(192);
-
     std::size_t decision_index = 0;
     for (std::size_t gy = 0; gy < grid_height; ++gy) {
         const std::size_t y = gy * config.stride;
         for (std::size_t gx = 0; gx < grid_width; ++gx) {
             const std::size_t x = gx * config.stride;
 
-            // Extract exact 8x8 patch in RGB scanline order without interpolation
-            for (std::size_t wy = 0; wy < 8; ++wy) {
-                const std::size_t src_row = ((y + wy) * image.width + x) * 3;
-                const std::size_t dst_row = (wy * 8) * 3;
-                for (std::size_t wx = 0; wx < 8; ++wx) {
-                    window[dst_row + wx * 3 + 0] = static_cast<double>(image.pixels[src_row + wx * 3 + 0]) / 255.0;
-                    window[dst_row + wx * 3 + 1] = static_cast<double>(image.pixels[src_row + wx * 3 + 1]) / 255.0;
-                    window[dst_row + wx * 3 + 2] = static_cast<double>(image.pixels[src_row + wx * 3 + 2]) / 255.0;
-                }
-            }
-
+            // Extract exact 192 normalized RGB inputs (EXACT_RGB_INPUT_VECTOR)
+            const auto window = extract_rgb_input_vector(image, x, y);
             const auto probabilities = model.network.predict(window);
 
             std::size_t top1_idx = 0;
@@ -348,8 +360,10 @@ void export_dense_map(const DenseMapResult& result,
        << "  },\n"
        << "  \"confidence_threshold\": " << std::fixed << std::setprecision(4) << result.config.confidence_threshold << ",\n"
        << "  \"margin_threshold\": " << result.config.margin_threshold << ",\n"
-       << "  \"sentinel_native_10m\": " << (result.config.sentinel_native_10m ? "true" : "false") << ",\n";
-    if (result.config.sentinel_native_10m) {
+       << "  \"sentinel_nominal_10m\": " << (result.config.sentinel_nominal_10m ? "true" : "false") << ",\n"
+       << "  \"operator_declared_nominal_10m\": " << (result.config.sentinel_nominal_10m ? "true" : "false") << ",\n"
+       << "  \"resolution_status\": \"" << (result.config.sentinel_nominal_10m ? "Operator declared nominal 10 m/pixel (unverified metadata)" : "Display image space (no metric scale declared)") << "\",\n";
+    if (result.config.sentinel_nominal_10m) {
         js << "  \"nominal_context_m\": 80.0,\n"
            << "  \"nominal_decision_spacing_m\": " << static_cast<double>(result.config.stride * 10) << ",\n";
     } else {
@@ -435,19 +449,25 @@ void export_dense_map(const DenseMapResult& result,
     }
     save_png_image(output_dir / "margin.png", margin_map);
 
-    // 6. Export overlay.png (SOURCE IMAGE SPACE: width x height, single authoritative C++ projection)
+    // 6. Export overlay.png (SOURCE IMAGE SPACE: width x height, single authoritative C++ projection centered on decisions)
     RgbImage overlay = source_image;
+    const std::size_t stride = result.config.stride;
+    const std::int64_t half_stride = static_cast<std::int64_t>(stride / 2);
+
     for (const auto& d : result.decisions) {
         const auto color = get_decision_color(result.palette, d.predicted_index, d.is_uncertain);
-        // Project decision onto its decision-spacing cell: [origin, origin + stride - 1]
-        for (std::size_t dy = 0; dy < result.config.stride; ++dy) {
-            const std::size_t py = d.origin_y + dy;
-            if (py >= source_image.height) continue;
-            for (std::size_t dx = 0; dx < result.config.stride; ++dx) {
-                const std::size_t px = d.origin_x + dx;
-                if (px >= source_image.width) continue;
+        // Decision cell centered on display anchor: [display - floor(stride/2), display - floor(stride/2) + stride - 1]
+        const std::int64_t cell_x0 = static_cast<std::int64_t>(d.display_x) - half_stride;
+        const std::int64_t cell_y0 = static_cast<std::int64_t>(d.display_y) - half_stride;
 
-                const std::size_t idx = (py * source_image.width + px) * 3;
+        for (std::size_t dy = 0; dy < stride; ++dy) {
+            const std::int64_t py = cell_y0 + static_cast<std::int64_t>(dy);
+            if (py < 0 || py >= static_cast<std::int64_t>(source_image.height)) continue;
+            for (std::size_t dx = 0; dx < stride; ++dx) {
+                const std::int64_t px = cell_x0 + static_cast<std::int64_t>(dx);
+                if (px < 0 || px >= static_cast<std::int64_t>(source_image.width)) continue;
+
+                const std::size_t idx = (static_cast<std::size_t>(py) * source_image.width + static_cast<std::size_t>(px)) * 3;
                 overlay.pixels[idx + 0] = static_cast<std::uint8_t>(0.5 * source_image.pixels[idx + 0] + 0.5 * color[0]);
                 overlay.pixels[idx + 1] = static_cast<std::uint8_t>(0.5 * source_image.pixels[idx + 1] + 0.5 * color[1]);
                 overlay.pixels[idx + 2] = static_cast<std::uint8_t>(0.5 * source_image.pixels[idx + 2] + 0.5 * color[2]);

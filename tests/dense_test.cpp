@@ -32,10 +32,11 @@ tinyvision::RgbImage make_test_image(std::size_t width, std::size_t height) {
 
 int main() {
     try {
-        // 1. Direct 8x8 Extraction Witness: verify byte-for-byte exact RGB values without interpolation
+        // 1. Direct 8x8 Input Vector Extraction Witness (EXACT_RGB_INPUT_VECTOR):
+        // Verify all 192 normalized double values match the exact RGB scanline order without interpolation
         {
-            const std::size_t ref_w = 12;
-            const std::size_t ref_h = 10;
+            const std::size_t ref_w = 16;
+            const std::size_t ref_h = 16;
             tinyvision::RgbImage ref_img;
             ref_img.width = ref_w;
             ref_img.height = ref_h;
@@ -50,55 +51,72 @@ int main() {
                 }
             }
 
-            // Window origin at (x=2, y=1)
-            const std::size_t test_ox = 2;
-            const std::size_t test_oy = 1;
+            // Test extraction at multiple offsets
+            for (const auto [ox, oy] : std::vector<std::pair<std::size_t, std::size_t>>{{0, 0}, {2, 3}, {8, 8}}) {
+                const auto window = tinyvision::extract_rgb_input_vector(ref_img, ox, oy);
+                if (window.size() != 192) {
+                    std::cerr << "extracted window size mismatch: got " << window.size() << " expected 192\n";
+                    return 1;
+                }
 
-            // Extract window manually for comparison
-            std::vector<double> expected_window(192);
-            for (std::size_t wy = 0; wy < 8; ++wy) {
-                for (std::size_t wx = 0; wx < 8; ++wx) {
-                    const std::size_t src_idx = ((test_oy + wy) * ref_w + (test_ox + wx)) * 3;
-                    const std::size_t dst_idx = (wy * 8 + wx) * 3;
-                    expected_window[dst_idx + 0] = static_cast<double>(ref_img.pixels[src_idx + 0]) / 255.0;
-                    expected_window[dst_idx + 1] = static_cast<double>(ref_img.pixels[src_idx + 1]) / 255.0;
-                    expected_window[dst_idx + 2] = static_cast<double>(ref_img.pixels[src_idx + 2]) / 255.0;
+                // Verify every single one of the 192 values
+                for (std::size_t wy = 0; wy < 8; ++wy) {
+                    for (std::size_t wx = 0; wx < 8; ++wx) {
+                        const std::size_t src_idx = ((oy + wy) * ref_w + (ox + wx)) * 3;
+                        const std::size_t dst_idx = (wy * 8 + wx) * 3;
+                        const double expected_r = static_cast<double>(ref_img.pixels[src_idx + 0]) / 255.0;
+                        const double expected_g = static_cast<double>(ref_img.pixels[src_idx + 1]) / 255.0;
+                        const double expected_b = static_cast<double>(ref_img.pixels[src_idx + 2]) / 255.0;
+
+                        if (std::abs(window[dst_idx + 0] - expected_r) > 1e-15 ||
+                            std::abs(window[dst_idx + 1] - expected_g) > 1e-15 ||
+                            std::abs(window[dst_idx + 2] - expected_b) > 1e-15) {
+                            std::cerr << "exact RGB input vector mismatch at (" << wx << ", " << wy << ")\n";
+                            return 1;
+                        }
+                    }
                 }
             }
 
-            std::vector<std::string> dummy_classes{"c0", "c1"};
-            tinyvision::MLP dummy_mlp(192, 24, 2, 42);
-            tinyvision::ApplicationModel dummy_model(dummy_classes, 8, 8, dummy_mlp);
-
-            tinyvision::DenseMapConfig single_config;
-            single_config.stride = 1;
-            const auto single_res = tinyvision::classify_dense(dummy_model, ref_img, single_config);
-
-            // Find decision corresponding to (test_ox, test_oy)
-            const std::size_t target_idx = test_oy * single_res.grid_width + test_ox;
-            const auto& dec = single_res.decisions[target_idx];
-            if (dec.origin_x != test_ox || dec.origin_y != test_oy ||
-                dec.grid_x != test_ox || dec.grid_y != test_oy) {
-                std::cerr << "extraction witness grid indexing failed\n";
-                return 1;
+            // Verify out-of-range bounds check
+            bool threw = false;
+            try {
+                tinyvision::extract_rgb_input_vector(ref_img, 9, 0); // 9 + 8 = 17 > 16
+            } catch (const std::out_of_range&) {
+                threw = true;
             }
-
-            // Verify prediction matches direct forward of expected_window
-            const auto expected_probs = dummy_model.network.predict(expected_window);
-            const double expected_top1 = std::max(expected_probs[0], expected_probs[1]);
-            if (std::abs(dec.probability - expected_top1) > 1e-12) {
-                std::cerr << "extraction witness forward numerical mismatch: got "
-                          << dec.probability << " expected " << expected_top1 << '\n';
+            if (!threw) {
+                std::cerr << "out-of-bounds patch extraction did not throw out_of_range\n";
                 return 1;
             }
         }
 
-        // 2. Setup model with 3 classes
+        // 2. Canonical Palette Authority Verification
+        {
+            std::vector<std::string> classes{"floresta", "campo", "solo"};
+            const auto pal = tinyvision::get_canonical_palette(classes);
+            if (pal.classes.size() != 3) {
+                std::cerr << "canonical palette class count mismatch\n";
+                return 1;
+            }
+            if (pal.classes[0].name != "floresta" || pal.classes[0].hex_color != "#22c55e" ||
+                pal.classes[0].rgb[0] != 34 || pal.classes[0].rgb[1] != 197 || pal.classes[0].rgb[2] != 94) {
+                std::cerr << "canonical palette class 0 color mismatch\n";
+                return 1;
+            }
+            if (pal.uncertain.name != "UNCERTAIN" || pal.uncertain.hex_color != "#808080" ||
+                pal.uncertain.rgb[0] != 128 || pal.uncertain.rgb[1] != 128 || pal.uncertain.rgb[2] != 128) {
+                std::cerr << "canonical palette uncertain color mismatch\n";
+                return 1;
+            }
+        }
+
+        // 3. Setup model with 3 classes
         std::vector<std::string> class_names{"floresta", "campo", "solo"};
         tinyvision::MLP mlp(192, 24, 3, 7);
         tinyvision::ApplicationModel model(class_names, 8, 8, mlp);
 
-        // 3. Test grid dimensions for stride 1, 2, 4, 8 on 24x20 image
+        // 4. Test grid dimensions & spatial semantics for stride 1, 2, 4, 8 on 24x20 image
         const auto image = make_test_image(24, 20);
 
         for (const auto stride : {1, 2, 4, 8}) {
@@ -132,7 +150,7 @@ int main() {
             }
         }
 
-        // 4. Test repeatability
+        // 5. Test repeatability
         tinyvision::DenseMapConfig config_s1;
         config_s1.stride = 1;
         const auto run1 = tinyvision::classify_dense(model, image, config_s1);
@@ -152,7 +170,7 @@ int main() {
             }
         }
 
-        // 5. Test uncertainty thresholds
+        // 6. Test uncertainty thresholds
         tinyvision::DenseMapConfig config_thresh;
         config_thresh.stride = 1;
         config_thresh.confidence_threshold = 0.99999; // force UNCERTAIN
@@ -165,7 +183,7 @@ int main() {
             return 1;
         }
 
-        // 6. Test export to disk & artifact contracts
+        // 7. Test export to disk & artifact contracts & overlay cell centering
         const auto tmp_out = std::filesystem::temp_directory_path() / ("tinyvision_dense_test_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
         const auto dummy_model_path = tmp_out / "model.tlv";
         const auto dummy_source_path = tmp_out / "source.png";
@@ -176,7 +194,7 @@ int main() {
 
         tinyvision::DenseMapConfig config_export;
         config_export.stride = 2;
-        config_export.sentinel_native_10m = true;
+        config_export.sentinel_nominal_10m = true;
         const auto result_export = tinyvision::classify_dense(model, image, config_export);
         tinyvision::export_dense_map(result_export, model, image, dummy_model_path, dummy_source_path, tmp_out);
 
@@ -218,14 +236,51 @@ int main() {
             return 1;
         }
 
+        // Verify that class_map pixels strictly match the canonical palette colors
+        for (const auto& d : result_export.decisions) {
+            const std::size_t idx = (d.grid_y * class_map_img.width + d.grid_x) * 3;
+            const auto expected_rgb = result_export.palette.classes[d.predicted_index].rgb;
+            if (class_map_img.pixels[idx + 0] != expected_rgb[0] ||
+                class_map_img.pixels[idx + 1] != expected_rgb[1] ||
+                class_map_img.pixels[idx + 2] != expected_rgb[2]) {
+                std::cerr << "class_map pixel color mismatch with canonical palette\n";
+                return 1;
+            }
+        }
+
+        // Verify overlay cell centering on first decision:
+        // stride = 2: display_x = 0 + 4 = 4, display_y = 0 + 4 = 4.
+        // cell_x0 = 4 - 1 = 3, cell_y0 = 4 - 1 = 3.
+        // Pixels (3, 3), (4, 3), (3, 4), (4, 4) must be blended with class color.
+        {
+            const auto& first_dec = result_export.decisions[0];
+            const auto expected_rgb = result_export.palette.classes[first_dec.predicted_index].rgb;
+            for (std::size_t py = 3; py <= 4; ++py) {
+                for (std::size_t px = 3; px <= 4; ++px) {
+                    const std::size_t idx = (py * overlay_img.width + px) * 3;
+                    const auto expected_r = static_cast<std::uint8_t>(0.5 * image.pixels[idx + 0] + 0.5 * expected_rgb[0]);
+                    const auto expected_g = static_cast<std::uint8_t>(0.5 * image.pixels[idx + 1] + 0.5 * expected_rgb[1]);
+                    const auto expected_b = static_cast<std::uint8_t>(0.5 * image.pixels[idx + 2] + 0.5 * expected_rgb[2]);
+
+                    if (overlay_img.pixels[idx + 0] != expected_r ||
+                        overlay_img.pixels[idx + 1] != expected_g ||
+                        overlay_img.pixels[idx + 2] != expected_b) {
+                        std::cerr << "overlay centered cell pixel blending mismatch at (" << px << ", " << py << ")\n";
+                        return 1;
+                    }
+                }
+            }
+        }
+
         // Cleanup
         std::error_code ec;
         std::filesystem::remove_all(tmp_out, ec);
 
         std::cout << "TinyLogicVision dense spatial classification test PASS\n"
-                  << "extraction_witness=BYTE_EXACT_RGB_SCANLINE\n"
+                  << "extraction_witness=EXACT_RGB_INPUT_VECTOR\n"
                   << "decisions_stride1=221 decisions_stride2=63\n"
                   << "center_geometry=EXACT repeatability=EXACT\n"
+                  << "overlay_cell_centering=EXACT\n"
                   << "unified_palette=PASS margin_map=PASS\n";
 
     } catch (const std::exception& error) {

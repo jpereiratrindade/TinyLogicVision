@@ -331,19 +331,33 @@ def main():
                 assert metadata["stride"] == 4
                 # 32x32 image with stride 4: nx = (32-8)/4 + 1 = 7, ny = 7 => 49 decisions
                 assert metadata["decision_count"] == 49
-                assert metadata["sentinel_native_10m"] is True
+                assert metadata["sentinel_nominal_10m"] is True
+                assert metadata["operator_declared_nominal_10m"] is True
                 assert metadata["nominal_context_m"] == 80
                 assert metadata["nominal_decision_spacing_m"] == 40
                 assert "geospatial" in metadata
                 assert metadata["geospatial"]["available"] is False
 
-            # Verify artifact delivery via HTTP
-            print("Verifying map artifacts delivery over HTTP...")
+            # Verify artifact delivery via HTTP and parse run.json semantics
+            print("Verifying map artifacts delivery over HTTP and contract in run.json...")
             for art in ("class_map.png", "confidence.png", "margin.png", "overlay.png", "run.json", "classification.csv"):
                 with urllib.request.urlopen(f"{base_url}/api/runs/{run_id}/{art}") as res:
                     assert res.status == 200
                     data = res.read()
                     assert len(data) > 0
+                    if art == "run.json":
+                        run_meta = json.loads(data.decode("utf-8"))
+                        assert run_meta["grid_width"] == 7
+                        assert run_meta["grid_height"] == 7
+                        assert run_meta["decision_count"] == 49
+                        assert "spatial_semantics" in run_meta
+                        assert "support" in run_meta["spatial_semantics"]
+                        assert "concept_distinction" in run_meta["spatial_semantics"]
+                        assert "uncertainty_semantics" in run_meta
+                        assert "palette" in run_meta
+                        assert len(run_meta["palette"]["classes"]) == 3
+                        assert run_meta["palette"]["uncertain"]["color"] == "#808080"
+                        assert run_meta["geospatial"]["available"] is False
 
             # Verify point inspection endpoint
             print("Verifying point inspection endpoint...")

@@ -76,15 +76,15 @@
                 <span id="meta-sha" class="meta-val mono-small">-</span>
               </div>
 
-              <!-- Sentinel 10m Toggle -->
+              <!-- Sentinel 10m Nominal Scale Toggle -->
               <div class="sentinel-box">
                 <label class="toggle-container">
                   <input type="checkbox" id="chk-sentinel-10m">
                   <span class="toggle-slider"></span>
-                  <span class="toggle-text">Fonte é pixel Sentinel-2 nativo 10 m</span>
+                  <span class="toggle-text">Resolução nominal declarada: 10 m/pixel (Sentinel-2)</span>
                 </label>
                 <div id="sentinel-badge" class="resolution-badge display-only">
-                  DISPLAY IMAGE — SEM GARANTIA DE 10 m/PIXEL
+                  ESPAÇO DE PIXEL — SEM ESCALA MÉTRICA DECLARADA
                 </div>
               </div>
             </div>
@@ -350,10 +350,10 @@
             <label class="toggle-container">
               <input type="checkbox" id="dense-chk-sentinel-10m">
               <span class="toggle-slider"></span>
-              <span class="toggle-text">Fonte é Sentinel nativo 10 m</span>
+              <span class="toggle-text">Resolução nominal declarada: 10 m/pixel (Sentinel-2)</span>
             </label>
             <div id="dense-sentinel-badge" class="resolution-badge display-only">
-              DISPLAY IMAGE — NO 10 m GUARANTEE
+              ESPAÇO DE PIXEL — SEM ESCALA MÉTRICA DECLARADA
             </div>
           </div>
         </div>
@@ -460,14 +460,14 @@
 
               <!-- Export Links -->
               <div class="export-links-card">
-                <h4>📁 Artefatos Canônicos</h4>
+                <h4>📁 Download de Artefatos Canônicos</h4>
                 <div class="export-links-list">
-                  <a id="link-download-csv" href="#" target="_blank" class="btn btn-xs btn-outline">📥 classification.csv</a>
-                  <a id="link-download-json" href="#" target="_blank" class="btn btn-xs btn-outline">📋 run.json</a>
-                  <a id="link-download-overlay" href="#" target="_blank" class="btn btn-xs btn-outline">🖼️ overlay.png</a>
-                  <a id="link-download-classmap" href="#" target="_blank" class="btn btn-xs btn-outline">🗺️ class_map.png</a>
-                  <a id="link-download-confidencemap" href="#" target="_blank" class="btn btn-xs btn-outline">📊 confidence.png (Top-1)</a>
-                  <a id="link-download-marginmap" href="#" target="_blank" class="btn btn-xs btn-outline">📈 margin.png (Margem)</a>
+                  <a id="link-download-csv" href="#" download="classification.csv" target="_blank" class="btn btn-xs btn-outline">📥 classification.csv</a>
+                  <a id="link-download-json" href="#" download="run.json" target="_blank" class="btn btn-xs btn-outline">📋 run.json</a>
+                  <a id="link-download-overlay" href="#" download="overlay.png" target="_blank" class="btn btn-xs btn-outline">🖼️ overlay.png</a>
+                  <a id="link-download-classmap" href="#" download="class_map.png" target="_blank" class="btn btn-xs btn-outline">🗺️ class_map.png</a>
+                  <a id="link-download-confidencemap" href="#" download="confidence.png" target="_blank" class="btn btn-xs btn-outline">📊 confidence.png (Top-1)</a>
+                  <a id="link-download-marginmap" href="#" download="margin.png" target="_blank" class="btn btn-xs btn-outline">📈 margin.png (Margem)</a>
                 </div>
               </div>
             </div>

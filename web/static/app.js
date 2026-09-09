@@ -247,10 +247,10 @@ function setupImageLoading() {
   el.chkSentinel10m.addEventListener('change', () => {
     if (el.chkSentinel10m.checked) {
       el.sentinelBadge.className = 'resolution-badge sentinel-native';
-      el.sentinelBadge.textContent = '1 PIXEL = 10 m • PATCH 8x8 = 80 x 80 m';
+      el.sentinelBadge.textContent = 'RESOLUÇÃO NOMINAL DECLARADA 10 m/px • PATCH 8x8 = 80 x 80 m';
     } else {
       el.sentinelBadge.className = 'resolution-badge display-only';
-      el.sentinelBadge.textContent = 'DISPLAY IMAGE — SEM GARANTIA DE 10 m/PIXEL';
+      el.sentinelBadge.textContent = 'ESPAÇO DE PIXEL — SEM ESCALA MÉTRICA DECLARADA';
     }
   });
 }
@@ -863,8 +863,8 @@ function setupDenseMap() {
   el.denseChkSentinel10m.addEventListener('change', (e) => {
     const isSent = e.target.checked;
     el.denseSentinelBadge.textContent = isSent
-      ? 'SENTINEL-2 NATIVO 10 m (80x80m Contexto)'
-      : 'DISPLAY IMAGE — NO 10 m GUARANTEE';
+      ? 'RESOLUÇÃO NOMINAL DECLARADA 10 m/px (80×80m Contexto)'
+      : 'ESPAÇO DE PIXEL — SEM ESCALA MÉTRICA DECLARADA';
     el.denseSentinelBadge.className = 'resolution-badge ' + (isSent ? 'sentinel-native' : 'display-only');
   });
 
@@ -1108,9 +1108,9 @@ function updateInspectorUI(decision, originX, originY, centerX, centerY, display
   if (el.inspCenter) el.inspCenter.textContent = `(${centerX.toFixed(1)}, ${centerY.toFixed(1)})`;
   if (el.inspDisplay) el.inspDisplay.textContent = `(${displayX}, ${displayY})`;
   if (el.inspSupport) {
-    el.inspSupport.textContent = (denseState.metadata && (denseState.metadata.sentinel_nominal_10m || denseState.metadata.sentinel_native_10m))
-      ? '8x8 px (80x80 m nominal)'
-      : '8x8 px (Espaço de pixel)';
+    el.inspSupport.textContent = (denseState.metadata && (denseState.metadata.sentinel_nominal_10m || denseState.metadata.operator_declared_nominal_10m))
+      ? '8x8 px (80x80 m nominal declarada)'
+      : '8x8 px (Espaço de pixel da imagem)';
   }
 
   const isUncertain = decision.status === 'UNCERTAIN';
@@ -1167,16 +1167,20 @@ async function inspectPoint(e, isClick = false) {
   if (denseState.currentMode === 'class_map' || denseState.currentMode === 'confidence' || denseState.currentMode === 'margin') {
     gx = clickX;
     gy = clickY;
+    if (gx < 0 || gx >= nx || gy < 0 || gy >= ny) return;
     originX = gx * stride;
     originY = gy * stride;
   } else {
-    originX = Math.floor(clickX / stride) * stride;
-    originY = Math.floor(clickY / stride) * stride;
-    gx = Math.floor(originX / stride);
-    gy = Math.floor(originY / stride);
+    // In overlay/source space, decisions are projected in cells centered on display anchor:
+    // cell_x0 = gx * stride + 4 - floor(stride / 2)
+    const halfStride = Math.floor(stride / 2);
+    const rawGx = Math.floor((clickX - (4 - halfStride)) / stride);
+    const rawGy = Math.floor((clickY - (4 - halfStride)) / stride);
+    gx = Math.max(0, Math.min(nx - 1, rawGx));
+    gy = Math.max(0, Math.min(ny - 1, rawGy));
+    originX = gx * stride;
+    originY = gy * stride;
   }
-
-  if (gx < 0 || gx >= nx || gy < 0 || gy >= ny) return;
 
   const centerX = originX + 3.5;
   const centerY = originY + 3.5;
