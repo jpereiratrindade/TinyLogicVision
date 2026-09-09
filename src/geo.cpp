@@ -1,10 +1,23 @@
 #include "tinyvision/geo.hpp"
+#include "tinyvision/dense.hpp"
 
 #include <cmath>
 #include <sstream>
 #include <stdexcept>
 
 namespace tinyvision {
+
+RgbImageSource::RgbImageSource(RgbImage image, GeoMetadata meta)
+    : image_(std::move(image)),
+      meta_(std::move(meta)),
+      schema_(InputSchema::create_canonical_rgb(8, 8)) {
+    meta_.raster_width = image_.width;
+    meta_.raster_height = image_.height;
+}
+
+void RgbImageSource::read_window_into(std::size_t origin_x, std::size_t origin_y, std::span<double> out_buf) const {
+    extract_rgb_input_vector_into(image_, origin_x, origin_y, out_buf);
+}
 
 void validate_multiband_alignment(const std::vector<GeoMetadata>& band_metas) {
     if (band_metas.empty()) {

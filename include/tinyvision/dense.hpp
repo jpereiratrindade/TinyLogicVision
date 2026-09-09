@@ -1,6 +1,7 @@
 #pragma once
 
 #include "tinyvision/application.hpp"
+#include "tinyvision/geo.hpp"
 #include "tinyvision/image.hpp"
 
 #include <array>
@@ -29,6 +30,8 @@ struct DenseDecision {
     double center_y{};
     std::size_t display_x{};
     std::size_t display_y{};
+    double map_x{};
+    double map_y{};
     std::size_t predicted_index{};
     std::string predicted_class;
     double probability{}; // Top-1 uncalibrated softmax probability
@@ -108,6 +111,7 @@ struct DenseMapResult {
     std::vector<CompactDecision> compact_decisions;
     DenseMapConfig config;
     PaletteConfig palette;
+    GeoMetadata metadata;
     std::string implementation_mode{"TILED_STREAMING"};
     std::size_t thread_count{1};
 };
@@ -125,7 +129,12 @@ void extract_rgb_input_vector_into(const RgbImage& image,
 
 DenseMapResult classify_dense(const ApplicationModel& model,
                               const RgbImage& image,
-                              const DenseMapConfig& config);
+                              const DenseMapConfig& config,
+                              const GeoMetadata& meta = {});
+
+DenseMapResult classify_dense_source(const ApplicationModel& model,
+                                     const InputSource& source,
+                                     const DenseMapConfig& config);
 
 void export_dense_map(const DenseMapResult& result,
                       const ApplicationModel& model,

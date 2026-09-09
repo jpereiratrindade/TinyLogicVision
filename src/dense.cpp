@@ -20,7 +20,6 @@
 namespace tinyvision {
 namespace {
 
-// Self-contained SHA-256 for provenance hashing without extra library dependencies
 struct Sha256Context {
     std::uint32_t state[8]{0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
                            0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19};
@@ -143,6 +142,66 @@ std::array<std::uint8_t, 3> get_decision_color(const PaletteConfig& palette,
     return {128, 128, 128};
 }
 
+void write_geotiff_raster(const std::filesystem::path& path,
+                          const void* pixel_data,
+                          std::size_t byte_count,
+                          std::size_t width,
+                          std::size_t height,
+                          std::uint16_t bits_per_sample,
+                          const GeoMetadata& meta,
+                          std::size_t stride) {
+    std::ofstream out(path, std::ios::binary | std::ios::trunc);
+    if (!out) return;
+
+    // Header: II (Little endian) + 42 + offset to IFD (8)
+    const char tiff_hdr[8] = {'I', 'I', 42, 0, 8, 0, 0, 0};
+    out.write(tiff_hdr, 8);
+
+    const std::uint16_t num_tags = 11;
+    out.write(reinterpret_cast<const char*>(&num_tags), 2);
+
+    const std::size_t ifd_start = 8;
+    const std::size_t ifd_size = 2 + num_tags * 12 + 4;
+    const std::size_t scale_offset = ifd_start + ifd_size;
+    const std::size_t tiepoint_offset = scale_offset + 24;
+    const std::size_t data_offset = tiepoint_offset + 48;
+
+    auto write_tag = [&](std::uint16_t tag, std::uint16_t type, std::uint32_t count, std::uint32_t val_or_offset) {
+        out.write(reinterpret_cast<const char*>(&tag), 2);
+        out.write(reinterpret_cast<const char*>(&type), 2);
+        out.write(reinterpret_cast<const char*>(&count), 4);
+        out.write(reinterpret_cast<const char*>(&val_or_offset), 4);
+    };
+
+    write_tag(256, 4, 1, static_cast<std::uint32_t>(width));           // ImageWidth
+    write_tag(257, 4, 1, static_cast<std::uint32_t>(height));          // ImageLength
+    write_tag(258, 3, 1, bits_per_sample);                             // BitsPerSample
+    write_tag(259, 3, 1, 1);                                           // Compression (None)
+    write_tag(262, 3, 1, 1);                                           // Photometric (MinIsBlack)
+    write_tag(273, 4, 1, static_cast<std::uint32_t>(data_offset));     // StripOffsets
+    write_tag(277, 3, 1, 1);                                           // SamplesPerPixel
+    write_tag(278, 4, 1, static_cast<std::uint32_t>(height));          // RowsPerStrip
+    write_tag(279, 4, 1, static_cast<std::uint32_t>(byte_count));      // StripByteCounts
+    write_tag(33550, 12, 3, static_cast<std::uint32_t>(scale_offset)); // ModelPixelScaleTag
+    write_tag(33922, 12, 6, static_cast<std::uint32_t>(tiepoint_offset)); // ModelTiepointTag
+
+    const std::uint32_t next_ifd = 0;
+    out.write(reinterpret_cast<const char*>(&next_ifd), 4);
+
+    // Write PixelScale: [pixel_size_x * stride, pixel_size_y * stride, 0.0]
+    const double pixel_scale[3] = {meta.pixel_size_x * static_cast<double>(stride),
+                                   meta.pixel_size_y * static_cast<double>(stride),
+                                   0.0};
+    out.write(reinterpret_cast<const char*>(pixel_scale), sizeof(pixel_scale));
+
+    // Write Tiepoint: [0, 0, 0, origin_x, origin_y, 0]
+    const double tiepoint[6] = {0.0, 0.0, 0.0, meta.geotransform[0], meta.geotransform[3], 0.0};
+    out.write(reinterpret_cast<const char*>(tiepoint), sizeof(tiepoint));
+
+    // Write pixel payload
+    out.write(reinterpret_cast<const char*>(pixel_data), byte_count);
+}
+
 } // namespace
 
 PaletteConfig get_canonical_palette(const std::vector<std::string>& class_names) {
@@ -199,31 +258,29 @@ std::vector<double> extract_rgb_input_vector(const RgbImage& image,
     return window;
 }
 
-DenseMapResult classify_dense(const ApplicationModel& model,
-                              const RgbImage& image,
-                              const DenseMapConfig& config) {
+DenseMapResult classify_dense_source(const ApplicationModel& model,
+                                     const InputSource& source,
+                                     const DenseMapConfig& config) {
     if (config.stride != 1 && config.stride != 2 && config.stride != 4 && config.stride != 8) {
         throw std::invalid_argument("stride must be 1, 2, 4, or 8");
     }
-    if (image.width < 8 || image.height < 8) {
-        throw std::invalid_argument("image must be at least 8x8 pixels");
-    }
-    if (image.pixels.size() != image.width * image.height * 3) {
-        throw std::invalid_argument("invalid RGB image byte count");
+    if (source.width() < 8 || source.height() < 8) {
+        throw std::invalid_argument("raster source must be at least 8x8 pixels");
     }
 
-    const std::size_t grid_width = (image.width - 8) / config.stride + 1;
-    const std::size_t grid_height = (image.height - 8) / config.stride + 1;
+    const std::size_t grid_width = (source.width() - 8) / config.stride + 1;
+    const std::size_t grid_height = (source.height() - 8) / config.stride + 1;
     const std::size_t total_decisions = grid_width * grid_height;
 
     DenseMapResult result;
-    result.source_width = image.width;
-    result.source_height = image.height;
+    result.source_width = source.width();
+    result.source_height = source.height();
     result.grid_width = grid_width;
     result.grid_height = grid_height;
     result.total_decisions = total_decisions;
     result.config = config;
     result.palette = get_canonical_palette(model.class_names);
+    result.metadata = source.spatial_metadata();
     result.decisions.resize(total_decisions);
     result.compact_decisions.resize(total_decisions);
 
@@ -236,10 +293,11 @@ DenseMapResult classify_dense(const ApplicationModel& model,
     result.implementation_mode = "TILED_STREAMING";
 
     const std::size_t num_classes = model.class_names.size();
+    const std::size_t input_elements = model.network.input_size();
 
     auto process_rows = [&](std::size_t gy_start, std::size_t gy_end) {
         MLPWorkspace ws;
-        std::array<double, 192> patch_buf{};
+        std::vector<double> patch_buf(input_elements);
 
         for (std::size_t gy = gy_start; gy < gy_end; ++gy) {
             const std::size_t y = gy * config.stride;
@@ -249,10 +307,7 @@ DenseMapResult classify_dense(const ApplicationModel& model,
                 const std::size_t x = gx * config.stride;
                 const std::size_t dec_idx = row_offset + gx;
 
-                // Extract without heap allocation
-                extract_rgb_input_vector_into(image, x, y, patch_buf);
-
-                // Run forward into reusable workspace
+                source.read_window_into(x, y, patch_buf);
                 model.network.forward_into(patch_buf, ws);
                 const auto& probabilities = ws.probabilities;
 
@@ -277,7 +332,8 @@ DenseMapResult classify_dense(const ApplicationModel& model,
                 const bool is_uncertain = (top1_prob < config.confidence_threshold) ||
                                           (margin < config.margin_threshold);
 
-                // 1. Fill compact decision
+                const auto [map_x, map_y] = result.metadata.pixel_to_map(static_cast<double>(x) + 3.5, static_cast<double>(y) + 3.5);
+
                 auto& cd = result.compact_decisions[dec_idx];
                 cd.grid_x = static_cast<std::uint32_t>(gx);
                 cd.grid_y = static_cast<std::uint32_t>(gy);
@@ -290,7 +346,6 @@ DenseMapResult classify_dense(const ApplicationModel& model,
                 cd.margin = static_cast<float>(margin);
                 cd.is_uncertain = is_uncertain;
 
-                // 2. Fill standard DenseDecision for backwards compatibility
                 auto& d = result.decisions[dec_idx];
                 d.grid_x = gx;
                 d.grid_y = gy;
@@ -300,6 +355,8 @@ DenseMapResult classify_dense(const ApplicationModel& model,
                 d.center_y = static_cast<double>(y) + 3.5;
                 d.display_x = x + 4;
                 d.display_y = y + 4;
+                d.map_x = map_x;
+                d.map_y = map_y;
                 d.predicted_index = top1_idx;
                 d.predicted_class = model.class_names[top1_idx];
                 d.probability = top1_prob;
@@ -330,7 +387,6 @@ DenseMapResult classify_dense(const ApplicationModel& model,
         }
     }
 
-    // Count totals deterministically
     std::size_t classified = 0;
     std::size_t uncertain = 0;
     for (const auto& cd : result.compact_decisions) {
@@ -346,6 +402,14 @@ DenseMapResult classify_dense(const ApplicationModel& model,
     return result;
 }
 
+DenseMapResult classify_dense(const ApplicationModel& model,
+                              const RgbImage& image,
+                              const DenseMapConfig& config,
+                              const GeoMetadata& meta) {
+    RgbImageSource source(image, meta);
+    return classify_dense_source(model, source, config);
+}
+
 void export_dense_map(const DenseMapResult& result,
                       const ApplicationModel& model,
                       const RgbImage& source_image,
@@ -354,31 +418,48 @@ void export_dense_map(const DenseMapResult& result,
                       const std::filesystem::path& output_dir) {
     std::filesystem::create_directories(output_dir);
 
-    // 1. Export classification.csv
+    // 1. Export classification.csv (with map_x, map_y when geo is available)
     const auto csv_path = output_dir / "classification.csv";
     std::ofstream csv(csv_path);
     if (!csv) {
         throw std::runtime_error("failed to open " + csv_path.string() + " for writing");
     }
-    csv << "grid_x,grid_y,origin_x,origin_y,center_x,center_y,display_x,display_y,predicted_class,probability,second_class,second_probability,margin,status\n";
-    for (const auto& d : result.decisions) {
-        csv << d.grid_x << ',' << d.grid_y << ','
-            << d.origin_x << ',' << d.origin_y << ','
-            << std::fixed << std::setprecision(1) << d.center_x << ',' << d.center_y << ','
-            << d.display_x << ',' << d.display_y << ','
-            << d.predicted_class << ','
-            << std::setprecision(6) << d.probability << ','
-            << d.second_class << ','
-            << d.second_probability << ','
-            << d.margin << ','
-            << d.status << '\n';
+
+    if (result.metadata.has_geo) {
+        csv << "grid_x,grid_y,origin_x,origin_y,center_x,center_y,display_x,display_y,map_x,map_y,predicted_class,probability,second_class,second_probability,margin,status\n";
+        for (const auto& d : result.decisions) {
+            csv << d.grid_x << ',' << d.grid_y << ','
+                << d.origin_x << ',' << d.origin_y << ','
+                << std::fixed << std::setprecision(1) << d.center_x << ',' << d.center_y << ','
+                << d.display_x << ',' << d.display_y << ','
+                << std::setprecision(3) << d.map_x << ',' << d.map_y << ','
+                << d.predicted_class << ','
+                << std::setprecision(6) << d.probability << ','
+                << d.second_class << ','
+                << d.second_probability << ','
+                << d.margin << ','
+                << d.status << '\n';
+        }
+    } else {
+        csv << "grid_x,grid_y,origin_x,origin_y,center_x,center_y,display_x,display_y,predicted_class,probability,second_class,second_probability,margin,status\n";
+        for (const auto& d : result.decisions) {
+            csv << d.grid_x << ',' << d.grid_y << ','
+                << d.origin_x << ',' << d.origin_y << ','
+                << std::fixed << std::setprecision(1) << d.center_x << ',' << d.center_y << ','
+                << d.display_x << ',' << d.display_y << ','
+                << d.predicted_class << ','
+                << std::setprecision(6) << d.probability << ','
+                << d.second_class << ','
+                << d.second_probability << ','
+                << d.margin << ','
+                << d.status << '\n';
+        }
     }
 
     // 2. Export decisions.bin for O(1) indexed lookup
     const auto bin_path = output_dir / "decisions.bin";
     std::ofstream binf(bin_path, std::ios::binary | std::ios::trunc);
     if (binf) {
-        // 64-byte Header
         char header[64]{0};
         std::memcpy(header, "TLV_DEC\0", 8);
         const std::uint32_t version = 1;
@@ -396,7 +477,6 @@ void export_dense_map(const DenseMapResult& result,
         std::memcpy(header + 28, &record_size, 4);
         binf.write(header, 64);
 
-        // Fixed records
         for (const auto& cd : result.compact_decisions) {
             CompactDecisionRecord rec{};
             rec.grid_x = cd.grid_x;
@@ -481,7 +561,7 @@ void export_dense_map(const DenseMapResult& result,
        << "  \"margin_threshold\": " << result.config.margin_threshold << ",\n"
        << "  \"sentinel_nominal_10m\": " << (result.config.sentinel_nominal_10m ? "true" : "false") << ",\n"
        << "  \"operator_declared_nominal_10m\": " << (result.config.sentinel_nominal_10m ? "true" : "false") << ",\n"
-       << "  \"resolution_status\": \"" << (result.config.sentinel_nominal_10m ? "Operator declared nominal 10 m/pixel (unverified metadata)" : "Display image space (no metric scale declared)") << "\",\n";
+       << "  \"resolution_status\": \"" << (result.config.sentinel_nominal_10m ? "Operator declared nominal 10 m/pixel (unverified metadata)" : (result.metadata.has_geo ? "Georeferenced CRS metadata" : "Display image space (no metric scale declared)")) << "\",\n";
     if (result.config.sentinel_nominal_10m) {
         js << "  \"nominal_context_m\": 80.0,\n"
            << "  \"nominal_decision_spacing_m\": " << static_cast<double>(result.config.stride * 10) << ",\n";
@@ -505,10 +585,19 @@ void export_dense_map(const DenseMapResult& result,
        << static_cast<int>(result.palette.uncertain.rgb[2]) << "]}\n"
        << "  },\n"
        << "  \"geospatial\": {\n"
-       << "    \"available\": false,\n"
-       << "    \"crs\": null,\n"
-       << "    \"transform\": null,\n"
-       << "    \"h3\": null\n"
+       << "    \"available\": " << (result.metadata.has_geo ? "true" : "false") << ",\n"
+       << "    \"crs\": " << (result.metadata.has_geo ? ("\"" + result.metadata.crs + "\"") : "null") << ",\n"
+       << "    \"geotransform\": ["
+       << result.metadata.geotransform[0] << ", " << result.metadata.geotransform[1] << ", "
+       << result.metadata.geotransform[2] << ", " << result.metadata.geotransform[3] << ", "
+       << result.metadata.geotransform[4] << ", " << result.metadata.geotransform[5] << "],\n"
+       << "    \"class_codes\": {\n";
+    for (std::size_t i = 0; i < model.class_names.size(); ++i) {
+        js << "      \"" << i << "\": \"" << model.class_names[i] << "\",\n";
+    }
+    js << "      \"254\": \"UNCERTAIN\",\n"
+       << "      \"255\": \"NODATA\"\n"
+       << "    }\n"
        << "  },\n"
        << "  \"summary\": {\n"
        << "    \"total_decisions\": " << result.total_decisions << ",\n"
@@ -523,7 +612,7 @@ void export_dense_map(const DenseMapResult& result,
        << "  }\n"
        << "}\n";
 
-    // 4. Export class_map.png (GRID SPACE: grid_width x grid_height)
+    // 4. Export class_map.png
     RgbImage class_map;
     class_map.width = result.grid_width;
     class_map.height = result.grid_height;
@@ -538,7 +627,7 @@ void export_dense_map(const DenseMapResult& result,
     }
     save_png_image(output_dir / "class_map.png", class_map);
 
-    // 5. Export confidence.png (GRID SPACE: Top-1 Probability map)
+    // 5. Export confidence.png
     RgbImage conf_map;
     conf_map.width = result.grid_width;
     conf_map.height = result.grid_height;
@@ -553,7 +642,7 @@ void export_dense_map(const DenseMapResult& result,
     }
     save_png_image(output_dir / "confidence.png", conf_map);
 
-    // 6. Export margin.png (GRID SPACE: Top-1 minus Top-2 Margin map)
+    // 6. Export margin.png
     RgbImage margin_map;
     margin_map.width = result.grid_width;
     margin_map.height = result.grid_height;
@@ -568,7 +657,7 @@ void export_dense_map(const DenseMapResult& result,
     }
     save_png_image(output_dir / "margin.png", margin_map);
 
-    // 7. Export overlay.png (SOURCE IMAGE SPACE: width x height, single authoritative C++ projection centered on decisions)
+    // 7. Export overlay.png
     RgbImage overlay = source_image;
     const std::size_t stride = result.config.stride;
     const std::int64_t half_stride = static_cast<std::int64_t>(stride / 2);
@@ -595,6 +684,28 @@ void export_dense_map(const DenseMapResult& result,
         }
     }
     save_png_image(output_dir / "overlay.png", overlay);
+
+    // 8. When true GeoMetadata is present, export GeoTIFFs: class_map.tif, confidence.tif, margin.tif
+    if (result.metadata.has_geo) {
+        // class_map.tif (uint8 class codes: 0..N-1, 254=UNCERTAIN, 255=NODATA)
+        std::vector<std::uint8_t> geo_classes(result.total_decisions);
+        std::vector<float> geo_conf(result.total_decisions);
+        std::vector<float> geo_margin(result.total_decisions);
+
+        for (std::size_t i = 0; i < result.total_decisions; ++i) {
+            const auto& cd = result.compact_decisions[i];
+            geo_classes[i] = cd.is_uncertain ? 254 : static_cast<std::uint8_t>(cd.predicted_index);
+            geo_conf[i] = cd.probability;
+            geo_margin[i] = cd.margin;
+        }
+
+        write_geotiff_raster(output_dir / "class_map.tif", geo_classes.data(), geo_classes.size(),
+                             result.grid_width, result.grid_height, 8, result.metadata, result.config.stride);
+        write_geotiff_raster(output_dir / "confidence.tif", geo_conf.data(), geo_conf.size() * sizeof(float),
+                             result.grid_width, result.grid_height, 32, result.metadata, result.config.stride);
+        write_geotiff_raster(output_dir / "margin.tif", geo_margin.data(), geo_margin.size() * sizeof(float),
+                             result.grid_width, result.grid_height, 32, result.metadata, result.config.stride);
+    }
 }
 
 } // namespace tinyvision

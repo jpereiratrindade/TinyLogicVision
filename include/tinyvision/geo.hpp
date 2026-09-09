@@ -1,6 +1,5 @@
 #pragma once
 
-#include "tinyvision/dense.hpp"
 #include "tinyvision/image.hpp"
 #include "tinyvision/schema.hpp"
 #include "tinyvision/tensor.hpp"
@@ -49,13 +48,7 @@ public:
 
 class RgbImageSource : public InputSource {
 public:
-    explicit RgbImageSource(RgbImage image, GeoMetadata meta = {})
-        : image_(std::move(image)),
-          meta_(std::move(meta)),
-          schema_(InputSchema::create_canonical_rgb(8, 8)) {
-        meta_.raster_width = image_.width;
-        meta_.raster_height = image_.height;
-    }
+    explicit RgbImageSource(RgbImage image, GeoMetadata meta = {});
 
     std::size_t width() const override { return image_.width; }
     std::size_t height() const override { return image_.height; }
@@ -63,10 +56,7 @@ public:
     const InputSchema& schema() const override { return schema_; }
     const GeoMetadata& spatial_metadata() const override { return meta_; }
 
-    void read_window_into(std::size_t origin_x, std::size_t origin_y, std::span<double> out_buf) const override {
-        extract_rgb_input_vector_into(image_, origin_x, origin_y, out_buf);
-    }
-
+    void read_window_into(std::size_t origin_x, std::size_t origin_y, std::span<double> out_buf) const override;
     const RgbImage& image() const noexcept { return image_; }
 
 private:

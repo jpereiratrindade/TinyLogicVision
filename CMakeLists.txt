@@ -72,6 +72,10 @@ add_executable(geo_test tests/geo_test.cpp)
 target_link_libraries(geo_test PRIVATE tinyvision_application)
 add_test(NAME geo_test COMMAND geo_test)
 
+add_executable(geo_dense_test tests/geo_dense_test.cpp)
+target_link_libraries(geo_dense_test PRIVATE tinyvision_application)
+add_test(NAME geo_dense_test COMMAND geo_dense_test)
+
 add_executable(sentinel_test tests/sentinel_test.cpp)
 target_link_libraries(sentinel_test PRIVATE tinyvision_application)
 add_test(NAME sentinel_test COMMAND sentinel_test)
