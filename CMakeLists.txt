@@ -22,6 +22,7 @@ add_library(tinyvision_application
     src/application.cpp
     src/dense.cpp
     src/tensor.cpp
+    src/geo.cpp
 )
 target_include_directories(tinyvision_application PUBLIC include)
 target_link_libraries(tinyvision_application PUBLIC tinyvision_core PNG::PNG JPEG::JPEG)
@@ -65,6 +66,10 @@ add_test(NAME schema_model_test COMMAND schema_model_test)
 add_executable(multichannel_test tests/multichannel_test.cpp)
 target_link_libraries(multichannel_test PRIVATE tinyvision_application)
 add_test(NAME multichannel_test COMMAND multichannel_test)
+
+add_executable(geo_test tests/geo_test.cpp)
+target_link_libraries(geo_test PRIVATE tinyvision_application)
+add_test(NAME geo_test COMMAND geo_test)
 
 add_executable(training_test tests/training_test.cpp)
 target_link_libraries(training_test PRIVATE tinyvision_core)
