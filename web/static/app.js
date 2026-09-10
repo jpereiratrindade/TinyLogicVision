@@ -135,6 +135,13 @@ const el = {
   denseCanvas: document.getElementById('dense-canvas'),
   denseCanvasContainer: document.getElementById('dense-canvas-container'),
   denseCrosshair: document.getElementById('dense-crosshair'),
+  denseZoomOut: document.getElementById('dense-zoom-out'),
+  denseZoomIn: document.getElementById('dense-zoom-in'),
+  denseZoomFit: document.getElementById('dense-zoom-fit'),
+  denseZoomFill: document.getElementById('dense-zoom-fill'),
+  denseZoomActual: document.getElementById('dense-zoom-actual'),
+  denseZoomLevel: document.getElementById('dense-zoom-level'),
+  denseToggleExpand: document.getElementById('dense-toggle-expand'),
   inspGrid: document.getElementById('insp-grid'),
   inspOrigin: document.getElementById('insp-origin'),
   inspCenter: document.getElementById('insp-center'),
@@ -1570,7 +1577,7 @@ function renderDenseMapResults(runId, metadata) {
     item.className = 'legend-item';
     item.innerHTML = `
       <span><span class="legend-color-dot" style="background:${c.color}"></span> ${c.name}</span>
-      <span class="mono">${c.id}</span>
+      <span class="mono">${c.index}</span>
     `;
     el.denseDynamicLegend.appendChild(item);
   });
@@ -1587,17 +1594,134 @@ function renderDenseMapResults(runId, metadata) {
   const dCanvas = el.denseCanvas;
   const dCtx = dCanvas.getContext('2d');
   const dImg = new Image();
+  let activeDenseMode = 'overlay';
+  const denseView = {
+    scale: 1,
+    panX: 0,
+    panY: 0,
+    dragging: false,
+    moved: false,
+    startX: 0,
+    startY: 0,
+    lastX: 0,
+    lastY: 0,
+    inspectedImageX: null,
+    inspectedImageY: null,
+  };
+
+  const updateDenseCrosshair = () => {
+    if (denseView.inspectedImageX === null || !dCanvas.width || !dCanvas.height) {
+      el.denseCrosshair.classList.add('hidden');
+      return;
+    }
+    const canvasRect = dCanvas.getBoundingClientRect();
+    const containerRect = el.denseCanvasContainer.getBoundingClientRect();
+    el.denseCrosshair.style.left = `${canvasRect.left - containerRect.left +
+      (denseView.inspectedImageX / dCanvas.width) * canvasRect.width}px`;
+    el.denseCrosshair.style.top = `${canvasRect.top - containerRect.top +
+      (denseView.inspectedImageY / dCanvas.height) * canvasRect.height}px`;
+    el.denseCrosshair.classList.remove('hidden');
+  };
+
+  const applyDenseView = () => {
+    dCanvas.style.left = `calc(50% + ${denseView.panX}px)`;
+    dCanvas.style.top = `calc(50% + ${denseView.panY}px)`;
+    dCanvas.style.transform = `translate(-50%, -50%) scale(${denseView.scale})`;
+    el.denseZoomLevel.textContent = `${Math.round(denseView.scale * 100)}%`;
+    updateDenseCrosshair();
+  };
+
+  const denseScaleFor = (fill) => {
+    if (!dCanvas.width || !dCanvas.height) return 1;
+    const padding = 24;
+    const availableWidth = Math.max(1, el.denseCanvasContainer.clientWidth - padding);
+    const availableHeight = Math.max(1, el.denseCanvasContainer.clientHeight - padding);
+    const scaleX = availableWidth / dCanvas.width;
+    const scaleY = availableHeight / dCanvas.height;
+    return Math.min(8, Math.max(0.05, fill ? Math.max(scaleX, scaleY) : Math.min(scaleX, scaleY)));
+  };
+
+  const setDenseScale = (nextScale, clientX = null, clientY = null) => {
+    const bounded = Math.min(8, Math.max(0.05, nextScale));
+    if (clientX !== null && clientY !== null) {
+      const rect = el.denseCanvasContainer.getBoundingClientRect();
+      const offsetX = clientX - (rect.left + rect.width / 2);
+      const offsetY = clientY - (rect.top + rect.height / 2);
+      const ratio = bounded / denseView.scale;
+      denseView.panX = offsetX - (offsetX - denseView.panX) * ratio;
+      denseView.panY = offsetY - (offsetY - denseView.panY) * ratio;
+    }
+    denseView.scale = bounded;
+    applyDenseView();
+  };
+
+  const resetDenseView = (fill = false) => {
+    denseView.panX = 0;
+    denseView.panY = 0;
+    denseView.scale = denseScaleFor(fill);
+    applyDenseView();
+  };
+
   dImg.onload = () => {
     dCanvas.width = dImg.width;
     dCanvas.height = dImg.height;
     dCtx.drawImage(dImg, 0, 0);
+    denseView.inspectedImageX = null;
+    denseView.inspectedImageY = null;
+    requestAnimationFrame(() => resetDenseView(false));
   };
   dImg.src = `/api/runs/${runId}/overlay.png`;
-  let activeDenseMode = 'overlay';
+
+  el.denseZoomOut.onclick = () => setDenseScale(denseView.scale / 1.25);
+  el.denseZoomIn.onclick = () => setDenseScale(denseView.scale * 1.25);
+  el.denseZoomFit.onclick = () => resetDenseView(false);
+  el.denseZoomFill.onclick = () => resetDenseView(true);
+  el.denseZoomActual.onclick = () => {
+    denseView.panX = 0;
+    denseView.panY = 0;
+    setDenseScale(1);
+  };
+  el.denseToggleExpand.onclick = () => {
+    const expanded = el.denseResultsPanel.classList.toggle('dense-expanded');
+    el.denseToggleExpand.textContent = expanded ? '✕ Restaurar' : '⛶ Expandir';
+    requestAnimationFrame(() => resetDenseView(false));
+  };
+
+  el.denseCanvasContainer.onwheel = (event) => {
+    event.preventDefault();
+    setDenseScale(denseView.scale * (event.deltaY < 0 ? 1.15 : 1 / 1.15), event.clientX, event.clientY);
+  };
+
+  el.denseCanvasContainer.onpointerdown = (event) => {
+    if (event.button !== 0 || event.target.closest('.dense-navigation-toolbar')) return;
+    denseView.dragging = true;
+    denseView.moved = false;
+    denseView.startX = event.clientX;
+    denseView.startY = event.clientY;
+    denseView.lastX = event.clientX;
+    denseView.lastY = event.clientY;
+    el.denseCanvasContainer.classList.add('is-dragging');
+    el.denseCanvasContainer.setPointerCapture(event.pointerId);
+  };
+
+  el.denseCanvasContainer.onpointermove = (event) => {
+    if (!denseView.dragging) return;
+    const dx = event.clientX - denseView.lastX;
+    const dy = event.clientY - denseView.lastY;
+    if (Math.hypot(event.clientX - denseView.startX, event.clientY - denseView.startY) > 3) {
+      denseView.moved = true;
+    }
+    denseView.panX += dx;
+    denseView.panY += dy;
+    denseView.lastX = event.clientX;
+    denseView.lastY = event.clientY;
+    applyDenseView();
+  };
 
   // Setup view mode buttons
   const modeBtns = el.denseResultsPanel.querySelectorAll('.btn-mode');
   modeBtns.forEach((btn) => {
+    btn.classList.toggle('active', btn.dataset.mode === 'overlay');
     if (btn.dataset.mode === 'h3_aggr') {
       btn.disabled = !(metadata.h3 && metadata.h3.available);
       btn.title = btn.disabled ? 'H3 requer fonte georreferenciada e biblioteca H3 oficial' : 'Abrir CSV agregado por célula H3';
@@ -1625,12 +1749,16 @@ function renderDenseMapResults(runId, metadata) {
   });
 
   // $O(1)$ Binary Point Inspection
-  dCanvas.onclick = async (e) => {
+  const inspectDensePoint = async (clientX, clientY) => {
     const rect = dCanvas.getBoundingClientRect();
+    if (clientX < rect.left || clientX > rect.right || clientY < rect.top || clientY > rect.bottom) return;
     const scaleX = dCanvas.width / rect.width;
     const scaleY = dCanvas.height / rect.height;
-    const canvasX = Math.floor((e.clientX - rect.left) * scaleX);
-    const canvasY = Math.floor((e.clientY - rect.top) * scaleY);
+    const canvasX = Math.min(dCanvas.width - 1, Math.max(0, Math.floor((clientX - rect.left) * scaleX)));
+    const canvasY = Math.min(dCanvas.height - 1, Math.max(0, Math.floor((clientY - rect.top) * scaleY)));
+    denseView.inspectedImageX = canvasX + 0.5;
+    denseView.inspectedImageY = canvasY + 0.5;
+    updateDenseCrosshair();
     const gridMode = ['class_map', 'confidence', 'margin'].includes(activeDenseMode);
     const clickX = gridMode
       ? Math.floor(canvasX * Number(metadata.grid_width) / dCanvas.width) * Number(metadata.stride)
@@ -1680,6 +1808,24 @@ function renderDenseMapResults(runId, metadata) {
       }
     } catch (err) {
       // inspection failed
+    }
+  };
+
+  el.denseCanvasContainer.onpointerup = (event) => {
+    if (!denseView.dragging) return;
+    denseView.dragging = false;
+    el.denseCanvasContainer.classList.remove('is-dragging');
+    if (el.denseCanvasContainer.hasPointerCapture(event.pointerId)) {
+      el.denseCanvasContainer.releasePointerCapture(event.pointerId);
+    }
+    if (!denseView.moved) inspectDensePoint(event.clientX, event.clientY);
+  };
+
+  el.denseCanvasContainer.onpointercancel = (event) => {
+    denseView.dragging = false;
+    el.denseCanvasContainer.classList.remove('is-dragging');
+    if (el.denseCanvasContainer.hasPointerCapture(event.pointerId)) {
+      el.denseCanvasContainer.releasePointerCapture(event.pointerId);
     }
   };
 }

@@ -1125,25 +1125,87 @@ body {
 
 .dense-canvas-wrapper {
   position: relative;
-  background: #000;
+  background-color: #05080d;
+  background-image:
+    linear-gradient(45deg, #0b111b 25%, transparent 25%),
+    linear-gradient(-45deg, #0b111b 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #0b111b 75%),
+    linear-gradient(-45deg, transparent 75%, #0b111b 75%);
+  background-size: 24px 24px;
+  background-position: 0 0, 0 12px, 12px -12px, -12px 0;
   border: 1px solid var(--border-color);
   border-radius: var(--radius-sm);
-  overflow: auto;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  overflow: hidden;
   min-height: 480px;
-  cursor: crosshair;
+  height: min(72vh, 760px);
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
 }
 
 #dense-canvas {
+  position: absolute;
+  left: 50%;
+  top: 50%;
   image-rendering: pixelated;
-  max-width: 100%;
-  max-height: 600px;
+  max-width: none;
+  max-height: none;
+  transform-origin: center center;
+  will-change: transform, left, top;
+}
+
+.dense-canvas-wrapper.is-dragging {
+  cursor: grabbing;
+}
+
+.dense-navigation-toolbar {
+  position: absolute;
+  z-index: 5;
+  top: 10px;
+  left: 10px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px;
+  padding: 6px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  background: rgba(8, 15, 27, 0.9);
+  box-shadow: var(--shadow-md);
+  backdrop-filter: blur(6px);
+}
+
+.dense-navigation-toolbar .btn {
+  min-height: 28px;
+  padding: 4px 9px;
+}
+
+.dense-zoom-level {
+  min-width: 48px;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-align: center;
+}
+
+.dense-navigation-hint {
+  position: absolute;
+  z-index: 4;
+  left: 50%;
+  bottom: 10px;
+  transform: translateX(-50%);
+  padding: 5px 9px;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  background: rgba(8, 15, 27, 0.82);
+  font-size: 11px;
+  pointer-events: none;
+  white-space: nowrap;
 }
 
 .dense-crosshair {
   position: absolute;
+  z-index: 4;
   width: 10px;
   height: 10px;
   border: 2px solid #ff0055;
@@ -1151,6 +1213,29 @@ body {
   transform: translate(-50%, -50%);
   pointer-events: none;
   border-radius: 50%;
+}
+
+.dense-results-box.dense-expanded {
+  position: fixed;
+  z-index: 1000;
+  inset: 10px;
+  max-height: calc(100vh - 20px);
+  overflow: hidden;
+  box-shadow: 0 18px 70px rgba(0, 0, 0, 0.65);
+}
+
+.dense-results-box.dense-expanded .dense-viewer-layout {
+  min-height: 0;
+  flex: 1;
+}
+
+.dense-results-box.dense-expanded .dense-canvas-wrapper {
+  height: 100%;
+  min-height: 0;
+}
+
+.dense-results-box.dense-expanded .dense-side-panel {
+  overflow-y: auto;
 }
 
 .dense-side-panel {

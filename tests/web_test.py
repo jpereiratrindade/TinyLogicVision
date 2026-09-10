@@ -96,6 +96,8 @@ def main():
             html = res.read().decode("utf-8")
             assert "TinyLogicVision" in html
             assert "Preparar Dataset" in html
+            assert 'id="dense-zoom-fit"' in html
+            assert 'id="dense-toggle-expand"' in html
 
         with urllib.request.urlopen(f"{base_url}/style.css") as res:
             assert res.status == 200
@@ -103,7 +105,10 @@ def main():
 
         with urllib.request.urlopen(f"{base_url}/app.js") as res:
             assert res.status == 200
-            assert "TinyLogicVision" in res.read().decode("utf-8")
+            app_js = res.read().decode("utf-8")
+            assert "TinyLogicVision" in app_js
+            assert "setDenseScale" in app_js
+            assert "${c.index}" in app_js
 
         # 2. Test Path Traversal Protection
         print("Testing path traversal security...")

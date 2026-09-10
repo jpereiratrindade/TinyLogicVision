@@ -593,8 +593,18 @@
           <div class="dense-viewer-layout">
             <!-- Canvas Map Container -->
             <div class="dense-canvas-wrapper" id="dense-canvas-container">
+              <div class="dense-navigation-toolbar" aria-label="Navegação do mapa">
+                <button id="dense-zoom-out" class="btn btn-sm btn-icon" type="button" title="Reduzir zoom">−</button>
+                <button id="dense-zoom-in" class="btn btn-sm btn-icon" type="button" title="Ampliar zoom">+</button>
+                <button id="dense-zoom-fit" class="btn btn-sm" type="button" title="Mostrar a imagem completa">Ajustar</button>
+                <button id="dense-zoom-fill" class="btn btn-sm" type="button" title="Preencher o visor; arraste para navegar">Preencher</button>
+                <button id="dense-zoom-actual" class="btn btn-sm" type="button" title="Um pixel da imagem por pixel da tela">100%</button>
+                <span id="dense-zoom-level" class="dense-zoom-level">100%</span>
+                <button id="dense-toggle-expand" class="btn btn-sm" type="button" title="Expandir ou restaurar o visor">⛶ Expandir</button>
+              </div>
               <canvas id="dense-canvas"></canvas>
               <div id="dense-crosshair" class="dense-crosshair hidden"></div>
+              <div class="dense-navigation-hint">Roda: zoom · Arraste: navegar · Clique: inspecionar</div>
             </div>
 
             <!-- Side Inspector & Legend -->
