@@ -129,12 +129,20 @@ body {
 }
 
 .workspace-pill {
+  max-width: min(440px, 38vw);
   background: var(--bg-tertiary);
   padding: 4px 10px;
   border-radius: var(--radius-sm);
   border: 1px solid var(--border-color);
   color: #38bdf8;
   font-family: var(--font-mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-pill code {
+  font: inherit;
 }
 
 /* Tabs */
@@ -603,6 +611,55 @@ body {
   max-height: 140px;
   overflow-y: auto;
   margin-bottom: 10px;
+}
+
+.roi-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 190px;
+  overflow-y: auto;
+}
+
+.roi-list-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 8px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+}
+
+.roi-list-main {
+  min-width: 0;
+}
+
+.roi-list-title,
+.roi-list-meta {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.roi-list-title {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.roi-list-meta {
+  margin-top: 2px;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+.roi-delete-button {
+  min-width: 30px;
+  color: #fca5a5;
+  border-color: rgba(248, 113, 113, 0.4);
 }
 
 .summary-table {

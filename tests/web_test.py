@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Automated Test Suite for TinyLogicVision Web GUI & Dataset Authoring v0.1
+Automated Test Suite for TinyLogicVision Web GUI & Dataset Authoring v2.0
 """
 
 import hashlib
@@ -98,6 +98,7 @@ def main():
             assert "Preparar Dataset" in html
             assert 'id="dense-zoom-fit"' in html
             assert 'id="dense-toggle-expand"' in html
+            assert 'id="roi-list"' in html
 
         with urllib.request.urlopen(f"{base_url}/style.css") as res:
             assert res.status == 200
@@ -109,6 +110,7 @@ def main():
             assert "TinyLogicVision" in app_js
             assert "setDenseScale" in app_js
             assert "${c.index}" in app_js
+            assert "function deleteRoi" in app_js
 
         # 2. Test Path Traversal Protection
         print("Testing path traversal security...")

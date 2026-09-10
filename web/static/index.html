@@ -26,7 +26,7 @@
           <span class="cap-tag ready">H3</span>
           <span class="cap-tag ready">RIT</span>
         </div>
-        <div class="workspace-pill"><code>127.0.0.1 • .tinyvision/</code></div>
+        <div class="workspace-pill" title="Workspace ativo"><code id="active-workspace-path">127.0.0.1 • carregando…</code></div>
       </div>
     </header>
 
@@ -289,6 +289,9 @@
             <div class="roi-tools-row">
               <button id="btn-clear-rois" class="btn btn-sm btn-danger-outline">Limpar Todas ROIs</button>
               <span id="roi-count" class="badge">0 ROIs</span>
+            </div>
+            <div id="roi-list" class="roi-list">
+              <span class="empty-msg">Nenhuma ROI desenhada</span>
             </div>
           </section>
 
@@ -841,14 +844,14 @@
       <div class="workspace-grid">
         <div class="card">
           <div class="section-header-row">
-            <h3>Datasets em <code>.tinyvision/datasets/</code></h3>
+            <h3>Datasets no workspace ativo</h3>
             <span class="badge" id="browser-datasets-count">0</span>
           </div>
           <div id="browser-datasets-list" class="items-list"></div>
         </div>
         <div class="card">
           <div class="section-header-row">
-            <h3>Modelos em <code>.tinyvision/models/</code></h3>
+            <h3>Modelos no workspace ativo</h3>
             <span class="badge" id="browser-models-count">0</span>
           </div>
           <div id="browser-models-list" class="items-list"></div>

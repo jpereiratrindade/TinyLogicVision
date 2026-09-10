@@ -15,6 +15,7 @@ const state = {
     { name: 'solo_descoberto', color: '#f97316' },
   ],
   rois: [], // { id, x, y, width, height, class, split }
+  nextRoiId: 1,
   patches: [], // { id, roi_id, x, y, width: 8, height: 8, class, split, selected: true }
   zoom: 1.0,
   panX: 0,
@@ -34,6 +35,7 @@ const el = {
   tabs: document.querySelectorAll('.tab-btn'),
   tabContents: document.querySelectorAll('.tab-content'),
   navJobsBadge: document.getElementById('nav-jobs-badge'),
+  activeWorkspacePath: document.getElementById('active-workspace-path'),
   dropZone: document.getElementById('drop-zone'),
   fileInput: document.getElementById('image-file-input'),
   uploadPromptText: document.getElementById('upload-prompt-text'),
@@ -62,6 +64,7 @@ const el = {
   selectH3Resolution: document.getElementById('select-h3-resolution'),
   btnClearRois: document.getElementById('btn-clear-rois'),
   roiCount: document.getElementById('roi-count'),
+  roiList: document.getElementById('roi-list'),
   datasetNameInput: document.getElementById('dataset-name-input'),
   summaryTableBody: document.getElementById('summary-table-body'),
   datasetWarnings: document.getElementById('dataset-warnings'),
@@ -771,7 +774,9 @@ function setupCanvasInteraction() {
   el.btnClearRois.addEventListener('click', () => {
     state.rois = [];
     state.patches = [];
+    state.nextRoiId = 1;
     el.roiCount.textContent = '0 ROIs';
+    renderRoiList();
     updateSummaryTable();
     redrawMainCanvas();
   });
@@ -929,7 +934,7 @@ function addRoi(rect) {
   const activeSplit = el.selectActiveSplit.value;
   if (!activeClass) return;
 
-  const roiId = `roi_${state.rois.length + 1}`;
+  const roiId = `roi_${state.nextRoiId++}`;
   const roi = {
     id: roiId,
     x: Math.floor(rect.x / 8) * 8,
@@ -961,7 +966,53 @@ function addRoi(rect) {
   }
 
   updateSummaryTable();
+  renderRoiList();
   redrawMainCanvas();
+}
+
+function deleteRoi(roiId) {
+  state.rois = state.rois.filter((roi) => roi.id !== roiId);
+  state.patches = state.patches.filter((patch) => patch.roi_id !== roiId);
+  el.roiCount.textContent = `${state.rois.length} ROIs`;
+  renderRoiList();
+  updateSummaryTable();
+  redrawMainCanvas();
+}
+
+function renderRoiList() {
+  if (!el.roiList) return;
+  el.roiList.innerHTML = '';
+  if (state.rois.length === 0) {
+    const empty = document.createElement('span');
+    empty.className = 'empty-msg';
+    empty.textContent = 'Nenhuma ROI desenhada';
+    el.roiList.appendChild(empty);
+    return;
+  }
+
+  state.rois.forEach((roi) => {
+    const patchCount = state.patches.filter((patch) => patch.roi_id === roi.id).length;
+    const item = document.createElement('div');
+    item.className = 'roi-list-item';
+    const main = document.createElement('div');
+    main.className = 'roi-list-main';
+    const title = document.createElement('span');
+    title.className = 'roi-list-title';
+    title.textContent = `${roi.id} · ${roi.class} · ${roi.split.toUpperCase()}`;
+    const meta = document.createElement('span');
+    meta.className = 'roi-list-meta';
+    meta.textContent = `x=${roi.x}, y=${roi.y}, ${roi.width}×${roi.height} · ${patchCount} patches`;
+    main.append(title, meta);
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'btn btn-xs btn-danger-outline roi-delete-button';
+    remove.title = `Excluir somente ${roi.id}`;
+    remove.setAttribute('aria-label', remove.title);
+    remove.textContent = '✕';
+    remove.addEventListener('click', () => deleteRoi(roi.id));
+    item.append(main, remove);
+    el.roiList.appendChild(item);
+  });
 }
 
 function redrawMainCanvas() {
@@ -1056,6 +1107,7 @@ function setupDatasetGeneration() {
       const parentRoi = state.rois.find((r) => r.id === p.roi_id);
       if (parentRoi) p.split = parentRoi.split;
     });
+    renderRoiList();
     updateSummaryTable();
     redrawMainCanvas();
   });
@@ -1931,6 +1983,10 @@ async function refreshWorkspaceStatus() {
     const res = await fetch('/api/status');
     const data = await res.json();
     if (!data.success) return;
+    if (el.activeWorkspacePath) {
+      el.activeWorkspacePath.textContent = `127.0.0.1 • ${data.runtime_root}`;
+      el.activeWorkspacePath.title = data.runtime_root;
+    }
 
     state.datasets = data.datasets || [];
     state.models = data.models || [];

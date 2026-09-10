@@ -25,11 +25,32 @@ RGB patches and native B2/B3/B4/B8 tensors with strict input-schema checks.
 | Geospatial H3 (TV-H3-00) | Official H3 indexing after CRS→WGS84 transformation | READY WITH GDAL + H3 |
 | Spectral Ablation (TV-SPEC-00) | Neutral channel masking protocol | PREPARED / NOT_EVALUATED |
 | Web Async Jobs | Background CLI workers with polling on 127.0.0.1 | READY |
+| Isolated Workspaces | Selectable roots for uploads, datasets, models, runs, and manifests | READY |
+| Desktop GUI | Qt Quick workspace launcher for the shared Web workbench | READY WITH QT 6.5+ |
 | Application CLI | Unified command line interface & benchmark | READY |
 
 ## Quick start
 
-### 1. Aplicação Web Local (Web GUI v2.0)
+### 1. Workspaces isolados e GUI desktop
+
+O workspace padrão continua sendo `.tinyvision/`. Para criar projetos isolados:
+
+```bash
+./bin/tinyvision workspace init ./workspaces/cerrado
+./bin/tinyvision web --workspace ./workspaces/cerrado
+```
+
+Com Qt 6.5 ou mais recente, o launcher desktop permite selecionar/criar o
+workspace, iniciar o servidor local e abrir o mesmo workbench científico:
+
+```bash
+./bin/tinyvision gui ./workspaces/cerrado
+```
+
+Cada workspace contém `workspace.json`, `uploads/`, `datasets/`, `models/`,
+`runs/` e `manifests/`. Trocar o workspace nunca mistura esses artefatos.
+
+### 2. Aplicação Web Local (Web GUI v2.0)
 
 Inicie a interface web local auto-contida em `127.0.0.1`:
 
@@ -40,13 +61,13 @@ Inicie a interface web local auto-contida em `127.0.0.1`:
 O fluxo de trabalho interativo unificado oferece:
 1. **Modalidade & Fonte**: Escolha entre **RGB (192 entradas)** ou **Sentinel-2 10m Multibanda (B2, B3, B4, B8 — 256 entradas)** com metadados geoespaciais (CRS, pixel size, geotransform);
 2. **Definição de Classes**: Crie classes rotuladas com paleta unificada e canônica (ou preset Cerrado/Sentinel);
-3. **Regiões de Interesse (ROIs) & Particionamento H3**: Desenhe ROIs no canvas com validação de **1 ROI = 1 Split** e opção de **Particionamento Espacial H3** (1 célula H3 = 1 split) para prevenir spatial leakage;
+3. **Regiões de Interesse (ROIs) & Particionamento H3**: Desenhe ou exclua individualmente ROIs no canvas, com validação de **1 ROI = 1 Split** e opção de **Particionamento Espacial H3** (1 célula H3 = 1 split) para prevenir spatial leakage;
 4. **Extração de Patches & Proveniência**: Extraia patches exatos de $8 \times 8$ (ou tensores nativos `.tvp`) com manifesto e grafo de proveniência RIT (`manifest.csv`, `dataset.json`, `provenance.json`);
 5. **Treinamento Síncrono ou Assíncrono**: Treine modelos v1/v2 em C++ (`./bin/tinyvision train`) em segundo plano com monitoramento em tempo real via aba de Jobs;
 6. **Classificação Densa, GeoTIFF & Agregação H3**: Execute o streaming da cena inteira (`./bin/tinyvision map`) por tiles com halo, memória limitada pelo tile, inspeção $O(1)$ por seek binário, GeoTIFFs incrementais e H3 oficial;
 7. **Classificar & Avaliar**: Classifique amostras individuais e avalie splits mantendo o `PROBE` isolado.
 
-### 2. Linha de Comando (CLI)
+### 3. Linha de Comando (CLI)
 
 Treine, classifique, avalie, execute benchmarks e gere mapas densos georreferenciados via `./bin/tinyvision`:
 
@@ -87,7 +108,7 @@ cmake --build build
 ./bin/tinyvision verify
 ```
 
-### 3. Conceito da Classificação Espacial Densa & GeoTIFF
+### 4. Conceito da Classificação Espacial Densa & GeoTIFF
 
 - **Suporte Contextual (Support Window)**: $8 \times 8$ pixels ($192$ entradas RGB ou $256$ entradas Sentinel-2 $8 \times 8 \times 4$ $[B2, B3, B4, B8]$ scanline extraídas diretamente sem interpolação).
 - **Resolução Nominal Declarada**: $80 \times 80\text{ m}$ nominais quando declarada como escala nominal Sentinel-2 ($10\text{ m/px}$).
@@ -155,8 +176,8 @@ After cloning, run the complete project and synthetic baseline verification with
 # or: ./scripts/verify.sh
 ```
 
-The command configures and builds the Release/Ninja tree, runs all 19 test suites
-(including the CLI, dense spatial classification, and Web test suites), and checks the TV-00, TV-01A, TV-01B, and TV-APP-00
+The command configures and builds the Release/Ninja tree, runs all 22 test suites
+(including the CLI, workspace, Qt GUI, dense spatial classification, and Web test suites), and checks the TV-00, TV-01A, TV-01B, and TV-APP-00
 engineering witnesses. It does not evaluate synthetic TEST or a natural-image application probe.
 
 
@@ -169,7 +190,7 @@ ctest --test-dir build --output-on-failure
 ```
 
 Build prerequisites are a C++23 compiler, CMake, Ninja, and development packages
-for libpng and libjpeg. GDAL and the official H3 library are optional at build
+for libpng and libjpeg. Qt 6.5 Quick is optional for `tinyvision-gui`. GDAL and the official H3 library are optional at build
 time but required for native Sentinel rasters, GeoTIFF output, and H3 aggregation.
 
 The canonical Sentinel dense path reads one tile plus the exact 7-pixel support

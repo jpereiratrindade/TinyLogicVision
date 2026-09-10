@@ -61,6 +61,12 @@ NATURAL APP PROBE              EXPLORATORY / NOT CLAIM-BEARING
   image inspection, nominal 10m/px resolution declaration vs display resolution tagging, strict ROI-level split integrity annotation,
   exact 8x8 patch extraction with provenance manifest generation, and integrated training,
   classification, dense mapping with interactive spatial inspection, and split evaluation;
+- isolated selectable workspace roots, governed by `tinylogicvision.workspace/v1`,
+  for uploads, datasets, models, runs, and manifests;
+- an optional Qt Quick desktop launcher (`./bin/tinyvision gui [WORKSPACE]`) that
+  selects or creates a workspace, owns the local server process, and opens the shared Web workbench;
+- individual ROI deletion in dataset authoring, including removal of only the
+  patches owned by that ROI and immediate recomputation of split summaries;
 - in-memory C++ dense classification engine (`tinyvision map`) sliding an exact 8x8 window
   without interpolation (`EXACT_RGB_INPUT_VECTOR`), with configurable strides (1, 2, 4, 8), producing `classification.csv`, `run.json`,
   `class_map.png` (grid space), `confidence.png` (grid space), `margin.png` (grid space), and `overlay.png` (source image space centered on decisions)
