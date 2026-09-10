@@ -144,5 +144,9 @@ add_executable(dense_test tests/dense_test.cpp)
 target_link_libraries(dense_test PRIVATE tinyvision_application)
 add_test(NAME dense_test COMMAND dense_test)
 
+add_executable(dense_streaming_test tests/dense_streaming_test.cpp)
+target_link_libraries(dense_streaming_test PRIVATE tinyvision_application)
+add_test(NAME dense_streaming_test COMMAND dense_streaming_test)
+
 add_test(NAME cli_test COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/tests/cli_test.sh")
 add_test(NAME web_test COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/tests/web_test.py")

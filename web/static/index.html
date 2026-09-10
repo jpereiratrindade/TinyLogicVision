@@ -481,10 +481,10 @@
           <div>
             <h3>🗺️ Classificação Espacial Densa & Saídas Georreferenciadas (GEO / H3)</h3>
             <p class="help-text">
-              Motor paralelo C++ em memória, com limite preventivo de decisões, saída GeoTIFF, índice binário $O(1)$ e H3 oficial.
+              Streaming Sentinel-2 por tiles com halo, memória limitada, cena completa, saída GeoTIFF, índice binário $O(1)$ e H3 oficial.
             </p>
           </div>
-          <span class="badge-version">Parallel In-Memory Engine</span>
+          <span class="badge-version">Bounded Tile Streaming</span>
         </div>
 
         <div class="dense-controls-grid">
@@ -512,14 +512,17 @@
             </select>
           </div>
           <div class="form-col">
-            <label>Threads Paralelas:</label>
-            <select id="dense-select-threads" class="input-select">
-              <option value="0" selected>Auto (Hardware Concurrency)</option>
-              <option value="1">1 Thread (Determinístico estrito)</option>
-              <option value="2">2 Threads</option>
-              <option value="4">4 Threads</option>
-              <option value="8">8 Threads</option>
-              <option value="16">16 Threads</option>
+            <label>Execução do Streaming:</label>
+            <select id="dense-select-threads" class="input-select" disabled>
+              <option value="1" selected>Sequencial determinístico (TV-STREAM-01)</option>
+            </select>
+          </div>
+          <div class="form-col">
+            <label>Tile de Saída:</label>
+            <select id="dense-select-tile-size" class="input-select">
+              <option value="128">128×128 decisões (menor memória)</option>
+              <option value="256" selected>256×256 decisões (recomendado)</option>
+              <option value="512">512×512 decisões (mais I/O por bloco)</option>
             </select>
           </div>
         </div>
@@ -567,7 +570,7 @@
           </button>
           <div id="dense-progress" class="progress-box hidden">
             <div class="spinner"></div>
-            <span id="dense-progress-text">Processando janelas em paralelo no motor C++...</span>
+            <span id="dense-progress-text">Lendo tile + halo, inferindo e gravando incrementalmente...</span>
           </div>
         </div>
 

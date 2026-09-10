@@ -369,6 +369,7 @@ def main():
                 "confidence": 0.0,
                 "margin": 0.0,
                 "is_sentinel_10m": True,
+                "decision_csv": True,
             }).encode("utf-8")
 
             req = urllib.request.Request(
@@ -392,6 +393,9 @@ def main():
                 assert metadata["nominal_decision_spacing_m"] == 40
                 assert "geospatial" in metadata
                 assert metadata["geospatial"]["available"] is False
+                assert metadata["engineering_stats"]["implementation_mode"] == "BOUNDED_TILE_STREAMING"
+                assert metadata["engineering_stats"]["memory_bound_scope"] == "TILE_PLUS_HALO"
+                assert metadata["engineering_stats"]["max_decisions"] is None
 
             # Verify artifact delivery via HTTP and parse run.json semantics
             print("Verifying map artifacts delivery over HTTP and contract in run.json...")
@@ -641,6 +645,8 @@ def main():
                     assert s2_run_meta["source_height"] == 32
                     assert s2_run_meta["decision_count"] == 16
                     assert s2_run_meta["geospatial"]["available"] is True
+                    assert s2_run_meta["engineering_stats"]["implementation_mode"] == "BOUNDED_TILE_STREAMING"
+                    assert s2_run_meta["engineering_stats"]["peak_working_set_bytes"] > 0
                     assert s2_run_meta["h3"]["implementation"] in ("OFFICIAL_H3", "UNAVAILABLE")
 
                 geospatial_artifacts = ["class_map.tif", "confidence.tif", "margin.tif"]

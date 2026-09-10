@@ -94,10 +94,11 @@ struct DenseMapConfig {
     double confidence_threshold{0.0};
     double margin_threshold{0.0};
     bool sentinel_nominal_10m{false}; // User-declared nominal 10m/px scale (unverified metadata)
-    std::size_t threads{0};            // 0 = auto-detect hardware concurrency
+    std::size_t threads{0};            // In-memory reference engine only; TV-STREAM-01 is sequential.
     std::size_t tile_width{256};
     std::size_t tile_height{256};
-    std::size_t max_decisions{5'000'000}; // Safety cap for the current O(N) result storage; 0 = explicit unlimited.
+    std::size_t max_decisions{5'000'000}; // In-memory reference-engine cap; ignored by bounded streaming.
+    bool write_decision_csv{false}; // Potentially huge for stride 1; primary outputs are rasters.
 };
 
 struct DenseMapResult {
@@ -110,11 +111,15 @@ struct DenseMapResult {
     std::size_t uncertain_count{};
     std::vector<DenseDecision> decisions;
     std::vector<CompactDecision> compact_decisions;
+    std::vector<std::size_t> class_counts;
     DenseMapConfig config;
     PaletteConfig palette;
     GeoMetadata metadata;
     std::string implementation_mode{"PARALLEL_IN_MEMORY"};
     std::size_t thread_count{1};
+    std::size_t peak_tile_input_elements{0};
+    std::size_t peak_tile_decisions{0};
+    std::size_t peak_working_set_bytes{0};
 };
 
 // Extracts exactly 192 normalized RGB values in scanline order without interpolation
@@ -143,5 +148,17 @@ void export_dense_map(const DenseMapResult& result,
                       const std::filesystem::path& model_path,
                       const std::filesystem::path& source_path,
                       const std::filesystem::path& output_dir);
+
+// TV-DENSE-STREAM-01: whole-scene inference whose working memory is bounded by
+// tile size (plus the 7-pixel support halo), independent of total scene size.
+// Artifacts are written incrementally into output_dir; returned vectors are empty.
+DenseMapResult classify_and_export_dense_streaming(
+    const ApplicationModel& model,
+    const InputSource& source,
+    const RgbImage& preview_image,
+    const DenseMapConfig& config,
+    const std::filesystem::path& model_path,
+    const std::filesystem::path& source_path,
+    const std::filesystem::path& output_dir);
 
 } // namespace tinyvision

@@ -1262,6 +1262,8 @@ class TinyVisionRequestHandler(http.server.BaseHTTPRequestHandler):
         confidence = float(req.get("confidence", 0.0))
         margin = float(req.get("margin", 0.0))
         threads = int(req.get("threads", 0))
+        tile_size = int(req.get("tile_size", 256))
+        decision_csv = bool(req.get("decision_csv", False))
         is_sentinel = bool(req.get("is_sentinel_10m", False))
         bands = req.get("bands") or {}
 
@@ -1275,6 +1277,9 @@ class TinyVisionRequestHandler(http.server.BaseHTTPRequestHandler):
 
         if stride not in (1, 2, 4, 8):
             self.send_error_json(f"Invalid stride {stride}, must be 1, 2, 4, or 8", 400)
+            return
+        if tile_size not in (128, 256, 512):
+            self.send_error_json("Invalid tile size; expected 128, 256, or 512", 400)
             return
 
         run_id = f"map_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:6]}"
@@ -1290,9 +1295,13 @@ class TinyVisionRequestHandler(http.server.BaseHTTPRequestHandler):
             "--stride", str(stride),
             "--confidence", str(confidence),
             "--margin", str(margin),
+            "--tile-width", str(tile_size),
+            "--tile-height", str(tile_size),
         ]
         if threads > 0:
             cmd.extend(["--threads", str(threads)])
+        if decision_csv:
+            cmd.append("--decision-csv")
         if bands:
             normalized_bands = {}
             for band_name in ("b2", "b3", "b4", "b8"):
@@ -1381,8 +1390,9 @@ class TinyVisionRequestHandler(http.server.BaseHTTPRequestHandler):
     def handle_api_run_inspect(self, run_id: str, query: dict):
         clean_id = sanitize_name(run_id)
         csv_file = RUNS_DIR / clean_id / "classification.csv"
+        bin_file = RUNS_DIR / clean_id / "decisions.bin"
         run_file = RUNS_DIR / clean_id / "run.json"
-        if not csv_file.is_file() or not run_file.is_file():
+        if not run_file.is_file() or (not bin_file.is_file() and not csv_file.is_file()):
             self.send_error_json("Run not found", 404)
             return
 
@@ -1417,7 +1427,6 @@ class TinyVisionRequestHandler(http.server.BaseHTTPRequestHandler):
         target_row = gy * nx + gx
         row_data = None
 
-        bin_file = RUNS_DIR / clean_id / "decisions.bin"
         if bin_file.is_file():
             try:
                 with open(bin_file, "rb") as bf:

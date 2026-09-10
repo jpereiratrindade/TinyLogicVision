@@ -44,6 +44,11 @@ public:
     virtual const InputSchema& schema() const = 0;
     virtual const GeoMetadata& spatial_metadata() const = 0;
     virtual void read_window_into(std::size_t origin_x, std::size_t origin_y, std::span<double> out_buf) const = 0;
+    // Reads an arbitrary normalized, pixel-interleaved region. Streaming engines
+    // use this to load one tile plus its 8x8 support halo with a bounded working set.
+    virtual void read_region_into(std::size_t origin_x, std::size_t origin_y,
+                                  std::size_t region_width, std::size_t region_height,
+                                  std::span<double> out_buf) const = 0;
 };
 
 class RgbImageSource : public InputSource {
@@ -57,6 +62,9 @@ public:
     const GeoMetadata& spatial_metadata() const override { return meta_; }
 
     void read_window_into(std::size_t origin_x, std::size_t origin_y, std::span<double> out_buf) const override;
+    void read_region_into(std::size_t origin_x, std::size_t origin_y,
+                          std::size_t region_width, std::size_t region_height,
+                          std::span<double> out_buf) const override;
     const RgbImage& image() const noexcept { return image_; }
 
 private:
@@ -82,6 +90,9 @@ public:
     void read_window_into(std::size_t origin_x, std::size_t origin_y, std::span<double> out_buf) const override {
         tensor_.extract_normalized_patch_into(origin_x, origin_y, out_buf);
     }
+    void read_region_into(std::size_t origin_x, std::size_t origin_y,
+                          std::size_t region_width, std::size_t region_height,
+                          std::span<double> out_buf) const override;
 
     const MultichannelTensor& tensor() const noexcept { return tensor_; }
 

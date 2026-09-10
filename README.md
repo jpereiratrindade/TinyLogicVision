@@ -15,7 +15,7 @@ RGB patches and native B2/B3/B4/B8 tensors with strict input-schema checks.
 | TV-01C | Sealed synthetic TEST | NOT EXECUTED / SEALED |
 | TV-APP-00 | Real RGB application pipeline | READY — natural-image probe not evaluated |
 | Core Performance (TV-PERF-00) | Reusable zero-heap MLP workspaces | READY |
-| Dense Engine (TV-PERF-01) | Parallel in-memory inference & binary O(1) index | READY WITH 5M SAFETY CAP — bounded-memory streaming not implemented |
+| Dense Engine (TV-STREAM-01) | Whole-scene tile+halo streaming, incremental rasters & binary O(1) index | READY — sequential deterministic baseline |
 | Input Schema (TV-MB-00) | Generic WxHxC schema & Model format v2 | READY |
 | Multichannel Tensor (TV-MB-01) | Generic raster tensor & .tvp dataset foundation | READY |
 | Geospatial Raster (TV-GEO-00) | GDAL source & strict band alignment | READY WITH GDAL |
@@ -43,7 +43,7 @@ O fluxo de trabalho interativo unificado oferece:
 3. **Regiões de Interesse (ROIs) & Particionamento H3**: Desenhe ROIs no canvas com validação de **1 ROI = 1 Split** e opção de **Particionamento Espacial H3** (1 célula H3 = 1 split) para prevenir spatial leakage;
 4. **Extração de Patches & Proveniência**: Extraia patches exatos de $8 \times 8$ (ou tensores nativos `.tvp`) com manifesto e grafo de proveniência RIT (`manifest.csv`, `dataset.json`, `provenance.json`);
 5. **Treinamento Síncrono ou Assíncrono**: Treine modelos v1/v2 em C++ (`./bin/tinyvision train`) em segundo plano com monitoramento em tempo real via aba de Jobs;
-6. **Classificação Densa, GeoTIFF & Agregação H3**: Execute o motor paralelo em memória (`./bin/tinyvision map`) com multithreading (`--threads N`), limite preventivo padrão de 5 milhões de decisões, inspeção $O(1)$ por seek binário, GeoTIFFs e agregação H3 oficial;
+6. **Classificação Densa, GeoTIFF & Agregação H3**: Execute o streaming da cena inteira (`./bin/tinyvision map`) por tiles com halo, memória limitada pelo tile, inspeção $O(1)$ por seek binário, GeoTIFFs incrementais e H3 oficial;
 7. **Classificar & Avaliar**: Classifique amostras individuais e avalie splits mantendo o `PROBE` isolado.
 
 ### 2. Linha de Comando (CLI)
@@ -68,7 +68,8 @@ cmake --build build
     --band-b4 B04_10m.tif \
     --band-b8 B08_10m.tif \
     --stride 2 \
-    --threads 8 \
+    --tile-width 256 \
+    --tile-height 256 \
     --confidence 0.50 \
     --margin 0.10 \
     --sentinel-10m
@@ -154,7 +155,7 @@ After cloning, run the complete project and synthetic baseline verification with
 # or: ./scripts/verify.sh
 ```
 
-The command configures and builds the Release/Ninja tree, runs all 18 test suites
+The command configures and builds the Release/Ninja tree, runs all 19 test suites
 (including the CLI, dense spatial classification, and Web test suites), and checks the TV-00, TV-01A, TV-01B, and TV-APP-00
 engineering witnesses. It does not evaluate synthetic TEST or a natural-image application probe.
 
@@ -170,6 +171,15 @@ ctest --test-dir build --output-on-failure
 Build prerequisites are a C++23 compiler, CMake, Ninja, and development packages
 for libpng and libjpeg. GDAL and the official H3 library are optional at build
 time but required for native Sentinel rasters, GeoTIFF output, and H3 aggregation.
+
+The canonical Sentinel dense path reads one tile plus the exact 7-pixel support
+halo, reuses a single 8×8×4 inference buffer, writes decisions incrementally,
+and discards the tile. Scene dimensions therefore affect execution time and
+output size, but not the retained inference working set. Stride remains an
+analytical sampling choice and is not used as a memory-control mechanism.
+The very large per-decision `classification.csv` is disabled on this path by
+default; request it explicitly with `--decision-csv`. GeoTIFF rasters remain
+the primary dense products and `decisions.bin` retains indexed point inspection.
 
 
 ## Evidence sequence

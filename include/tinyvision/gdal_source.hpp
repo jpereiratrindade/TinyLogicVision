@@ -28,6 +28,9 @@ public:
     void read_window_into(std::size_t origin_x,
                           std::size_t origin_y,
                           std::span<double> out_buf) const override;
+    void read_region_into(std::size_t origin_x, std::size_t origin_y,
+                          std::size_t region_width, std::size_t region_height,
+                          std::span<double> out_buf) const override;
 
 private:
     struct Impl;

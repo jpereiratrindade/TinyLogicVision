@@ -85,6 +85,7 @@ run_test "TV-01A test" generalization_observatory_test
 run_test "TV-01B test" spatial_coverage_experiment_test
 run_test "TV-APP-00 test" application_pipeline_test
 run_test "Dense test" dense_test
+run_test "Dense streaming test" dense_streaming_test
 run_test "CLI test" cli_test
 run_test "Web GUI test" web_test
 

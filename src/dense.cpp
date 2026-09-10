@@ -344,6 +344,7 @@ DenseMapResult classify_dense_source(const ApplicationModel& model,
     result.total_decisions = total_decisions;
     result.config = config;
     result.palette = get_canonical_palette(model.class_names);
+    result.class_counts.assign(model.class_names.size(), 0);
     result.metadata = source.spatial_metadata();
     result.decisions.resize(total_decisions);
     result.compact_decisions.resize(total_decisions);
@@ -458,6 +459,7 @@ DenseMapResult classify_dense_source(const ApplicationModel& model,
             ++uncertain;
         } else {
             ++classified;
+            if (cd.predicted_index < result.class_counts.size()) ++result.class_counts[cd.predicted_index];
         }
     }
     result.classified_count = classified;
@@ -481,8 +483,10 @@ void export_dense_map(const DenseMapResult& result,
                       const std::filesystem::path& source_path,
                       const std::filesystem::path& output_dir) {
     std::filesystem::create_directories(output_dir);
+    const bool artifacts_prebuilt = result.implementation_mode == "BOUNDED_TILE_STREAMING";
 
     // 1. Export classification.csv (with map_x, map_y when geo is available)
+    if (!artifacts_prebuilt) {
     const auto csv_path = output_dir / "classification.csv";
     std::ofstream csv(csv_path);
     if (!csv) {
@@ -556,6 +560,7 @@ void export_dense_map(const DenseMapResult& result,
             binf.write(reinterpret_cast<const char*>(&rec), sizeof(rec));
         }
     }
+    }
 
     // 3. Export run.json
     const auto json_path = output_dir / "run.json";
@@ -572,10 +577,13 @@ void export_dense_map(const DenseMapResult& result,
     std::strftime(timestamp_buf, sizeof(timestamp_buf), "%Y-%m-%dT%H:%M:%SZ", &tm_buf);
 
     std::map<std::string, std::size_t> class_counts;
-    for (const auto& name : model.class_names) class_counts[name] = 0;
-    for (const auto& d : result.decisions) {
-        if (!d.is_uncertain) {
-            class_counts[d.predicted_class]++;
+    for (std::size_t index = 0; index < model.class_names.size(); ++index) {
+        class_counts[model.class_names[index]] = index < result.class_counts.size()
+            ? result.class_counts[index] : 0;
+    }
+    if (result.class_counts.empty()) {
+        for (const auto& d : result.decisions) {
+            if (!d.is_uncertain) class_counts[d.predicted_class]++;
         }
     }
 
@@ -623,7 +631,12 @@ void export_dense_map(const DenseMapResult& result,
        << "    \"implementation_mode\": \"" << json_escape(result.implementation_mode) << "\",\n"
        << "    \"thread_count\": " << result.thread_count << ",\n"
        << "    \"tile_dimensions\": [" << result.config.tile_width << ", " << result.config.tile_height << "],\n"
-       << "    \"max_decisions\": " << result.config.max_decisions << ",\n"
+       << "    \"max_decisions\": " << (artifacts_prebuilt ? "null" : std::to_string(result.config.max_decisions)) << ",\n"
+       << "    \"memory_bound_scope\": \"" << (artifacts_prebuilt ? "TILE_PLUS_HALO" : "TOTAL_DECISIONS") << "\",\n"
+       << "    \"decision_csv_available\": " << (std::filesystem::is_regular_file(output_dir / "classification.csv") ? "true" : "false") << ",\n"
+       << "    \"peak_tile_input_elements\": " << result.peak_tile_input_elements << ",\n"
+       << "    \"peak_tile_decisions\": " << result.peak_tile_decisions << ",\n"
+       << "    \"peak_working_set_bytes\": " << result.peak_working_set_bytes << ",\n"
        << "    \"decision_record_version\": 1,\n"
        << "    \"indexed_binary_available\": true\n"
        << "  },\n"
@@ -692,6 +705,7 @@ void export_dense_map(const DenseMapResult& result,
     }
 
     // 4. Export class_map.png
+    if (!artifacts_prebuilt) {
     RgbImage class_map;
     class_map.width = result.grid_width;
     class_map.height = result.grid_height;
@@ -805,6 +819,7 @@ void export_dense_map(const DenseMapResult& result,
                                       output_dir / "classification_h3.csv");
         }
     }
+    }
 
     // 9. Export provenance from the actual model, source, run and artifacts.
     const std::string run_id = "run:" + output_dir.filename().string();
@@ -836,6 +851,379 @@ void export_dense_map(const DenseMapResult& result,
     }
     provenance.export_json(output_dir / "provenance.json");
     provenance.export_jsonl(output_dir / "evidence.jsonl");
+}
+
+DenseMapResult classify_and_export_dense_streaming(
+    const ApplicationModel& model,
+    const InputSource& source,
+    const RgbImage& preview_image,
+    const DenseMapConfig& config,
+    const std::filesystem::path& model_path,
+    const std::filesystem::path& source_path,
+    const std::filesystem::path& output_dir) {
+#ifndef TINYVISION_WITH_GDAL
+    (void)model; (void)source; (void)preview_image; (void)config;
+    (void)model_path; (void)source_path; (void)output_dir;
+    throw std::runtime_error("bounded dense streaming requires GDAL support");
+#else
+    if (config.stride != 1 && config.stride != 2 && config.stride != 4 && config.stride != 8) {
+        throw std::invalid_argument("stride must be 1, 2, 4, or 8");
+    }
+    if (source.width() < 8 || source.height() < 8 || model.schema != source.schema() ||
+        model.network.input_size() != source.schema().input_size()) {
+        throw std::invalid_argument("model/source schema mismatch or raster smaller than 8x8");
+    }
+    if (config.tile_width == 0 || config.tile_height == 0) {
+        throw std::invalid_argument("streaming tile dimensions must be positive");
+    }
+
+    const std::size_t grid_width = (source.width() - 8) / config.stride + 1;
+    const std::size_t grid_height = (source.height() - 8) / config.stride + 1;
+    if (grid_height != 0 && grid_width > std::numeric_limits<std::size_t>::max() / grid_height) {
+        throw std::overflow_error("dense streaming decision grid size overflow");
+    }
+    const std::size_t total_decisions = grid_width * grid_height;
+    std::filesystem::create_directories(output_dir);
+
+    const auto class_partial = output_dir / ".class_map.partial.tif";
+    const auto confidence_partial = output_dir / ".confidence.partial.tif";
+    const auto margin_partial = output_dir / ".margin.partial.tif";
+    const auto csv_partial = output_dir / ".classification.partial.csv";
+    const auto binary_partial = output_dir / ".decisions.partial.bin";
+    const std::array partial_paths{class_partial, confidence_partial, margin_partial, binary_partial};
+    for (const auto& path : partial_paths) {
+        std::error_code ignored;
+        std::filesystem::remove(path, ignored);
+    }
+    {
+        std::error_code ignored;
+        std::filesystem::remove(csv_partial, ignored);
+    }
+
+    GDALAllRegister();
+    auto* driver = GetGDALDriverManager()->GetDriverByName("GTiff");
+    if (driver == nullptr) throw std::runtime_error("GDAL GTiff driver is unavailable");
+    char tiled[] = "TILED=YES";
+    char compression[] = "COMPRESS=DEFLATE";
+    char bigtiff[] = "BIGTIFF=IF_SAFER";
+    char* creation_options[]{tiled, compression, bigtiff, nullptr};
+    GDALDataset* class_dataset = nullptr;
+    GDALDataset* confidence_dataset = nullptr;
+    GDALDataset* margin_dataset = nullptr;
+
+    auto close_outputs = [&] {
+        if (class_dataset != nullptr) { GDALClose(class_dataset); class_dataset = nullptr; }
+        if (confidence_dataset != nullptr) { GDALClose(confidence_dataset); confidence_dataset = nullptr; }
+        if (margin_dataset != nullptr) { GDALClose(margin_dataset); margin_dataset = nullptr; }
+    };
+    auto configure_raster = [&](GDALDataset* dataset, double nodata) {
+        if (dataset == nullptr) throw std::runtime_error("cannot create streaming GeoTIFF output");
+        dataset->GetRasterBand(1)->SetNoDataValue(nodata);
+        if (source.spatial_metadata().has_geo) {
+            const auto& meta = source.spatial_metadata();
+            const double center_offset = 3.5 - static_cast<double>(config.stride) / 2.0;
+            double transform[6]{
+                meta.geotransform[0] + center_offset * meta.geotransform[1] + center_offset * meta.geotransform[2],
+                meta.geotransform[1] * static_cast<double>(config.stride),
+                meta.geotransform[2] * static_cast<double>(config.stride),
+                meta.geotransform[3] + center_offset * meta.geotransform[4] + center_offset * meta.geotransform[5],
+                meta.geotransform[4] * static_cast<double>(config.stride),
+                meta.geotransform[5] * static_cast<double>(config.stride)};
+            OGRSpatialReference reference;
+            reference.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
+            if (reference.SetFromUserInput(meta.crs.c_str()) != OGRERR_NONE ||
+                dataset->SetSpatialRef(&reference) != CE_None ||
+                dataset->SetGeoTransform(transform) != CE_None) {
+                throw std::runtime_error("cannot configure streaming GeoTIFF georeferencing");
+            }
+        }
+    };
+
+    DenseMapResult result;
+    try {
+        class_dataset = driver->Create(class_partial.string().c_str(), static_cast<int>(grid_width),
+                                       static_cast<int>(grid_height), 1, GDT_Byte, creation_options);
+        confidence_dataset = driver->Create(confidence_partial.string().c_str(), static_cast<int>(grid_width),
+                                            static_cast<int>(grid_height), 1, GDT_Float32, creation_options);
+        margin_dataset = driver->Create(margin_partial.string().c_str(), static_cast<int>(grid_width),
+                                       static_cast<int>(grid_height), 1, GDT_Float32, creation_options);
+        configure_raster(class_dataset, 255.0);
+        configure_raster(confidence_dataset, -9999.0);
+        configure_raster(margin_dataset, -9999.0);
+
+        std::ofstream csv;
+        if (config.write_decision_csv) csv.open(csv_partial, std::ios::trunc);
+        std::fstream binary(binary_partial, std::ios::in | std::ios::out | std::ios::binary | std::ios::trunc);
+        if (!binary || (config.write_decision_csv && !csv)) {
+            throw std::runtime_error("cannot create incremental dense output files");
+        }
+        if (config.write_decision_csv) {
+            if (source.spatial_metadata().has_geo) {
+                csv << "grid_x,grid_y,origin_x,origin_y,center_x,center_y,display_x,display_y,map_x,map_y,predicted_class,probability,second_class,second_probability,margin,status\n";
+            } else {
+                csv << "grid_x,grid_y,origin_x,origin_y,center_x,center_y,display_x,display_y,predicted_class,probability,second_class,second_probability,margin,status\n";
+            }
+        }
+        char header[64]{};
+        std::memcpy(header, "TLV_DEC\0", 8);
+        const std::uint32_t version = 1;
+        const std::uint32_t gw = static_cast<std::uint32_t>(grid_width);
+        const std::uint32_t gh = static_cast<std::uint32_t>(grid_height);
+        const std::uint32_t stride = static_cast<std::uint32_t>(config.stride);
+        const std::uint32_t class_count = static_cast<std::uint32_t>(model.class_names.size());
+        const std::uint32_t record_size = sizeof(CompactDecisionRecord);
+        std::memcpy(header + 8, &version, 4); std::memcpy(header + 12, &gw, 4);
+        std::memcpy(header + 16, &gh, 4); std::memcpy(header + 20, &stride, 4);
+        std::memcpy(header + 24, &class_count, 4); std::memcpy(header + 28, &record_size, 4);
+        binary.write(header, sizeof(header));
+
+        result.source_width = source.width(); result.source_height = source.height();
+        result.grid_width = grid_width; result.grid_height = grid_height;
+        result.total_decisions = total_decisions; result.config = config;
+        result.palette = get_canonical_palette(model.class_names);
+        result.metadata = source.spatial_metadata();
+        result.implementation_mode = "BOUNDED_TILE_STREAMING";
+        result.thread_count = 1;
+        result.class_counts.assign(model.class_names.size(), 0);
+
+        MLPWorkspace workspace;
+        std::vector<double> patch(model.network.input_size());
+        const std::size_t channels = source.channels();
+        for (std::size_t tile_gy = 0; tile_gy < grid_height; tile_gy += config.tile_height) {
+            const std::size_t tile_h = std::min(config.tile_height, grid_height - tile_gy);
+            for (std::size_t tile_gx = 0; tile_gx < grid_width; tile_gx += config.tile_width) {
+                const std::size_t tile_w = std::min(config.tile_width, grid_width - tile_gx);
+                const std::size_t input_x = tile_gx * config.stride;
+                const std::size_t input_y = tile_gy * config.stride;
+                const std::size_t input_w = (tile_w - 1) * config.stride + 8;
+                const std::size_t input_h = (tile_h - 1) * config.stride + 8;
+                std::vector<double> tile_pixels(input_w * input_h * channels);
+                source.read_region_into(input_x, input_y, input_w, input_h, tile_pixels);
+                std::vector<std::uint8_t> class_tile(tile_w * tile_h);
+                std::vector<float> confidence_tile(tile_w * tile_h);
+                std::vector<float> margin_tile(tile_w * tile_h);
+                std::vector<CompactDecisionRecord> record_row(tile_w);
+                result.peak_tile_input_elements = std::max(result.peak_tile_input_elements, tile_pixels.size());
+                result.peak_tile_decisions = std::max(result.peak_tile_decisions, tile_w * tile_h);
+                const std::size_t working_bytes = tile_pixels.size() * sizeof(double) +
+                    class_tile.size() + confidence_tile.size() * sizeof(float) +
+                    margin_tile.size() * sizeof(float) + record_row.size() * sizeof(CompactDecisionRecord) +
+                    patch.size() * sizeof(double);
+                result.peak_working_set_bytes = std::max(result.peak_working_set_bytes, working_bytes);
+
+                for (std::size_t local_y = 0; local_y < tile_h; ++local_y) {
+                    const std::size_t gy = tile_gy + local_y;
+                    const std::size_t patch_y = local_y * config.stride;
+                    for (std::size_t local_x = 0; local_x < tile_w; ++local_x) {
+                        const std::size_t gx = tile_gx + local_x;
+                        const std::size_t patch_x = local_x * config.stride;
+                        for (std::size_t wy = 0; wy < 8; ++wy) {
+                            for (std::size_t wx = 0; wx < 8; ++wx) {
+                                const std::size_t tile_index = ((patch_y + wy) * input_w + patch_x + wx) * channels;
+                                const std::size_t patch_index = (wy * 8 + wx) * channels;
+                                std::copy_n(tile_pixels.data() + tile_index, channels, patch.data() + patch_index);
+                            }
+                        }
+                        model.network.forward_into(patch, workspace);
+                        std::size_t top1 = 0, top2 = 0;
+                        double p1 = -1.0, p2 = -1.0;
+                        for (std::size_t class_index = 0; class_index < workspace.probabilities.size(); ++class_index) {
+                            const double probability = workspace.probabilities[class_index];
+                            if (probability > p1) { top2 = top1; p2 = p1; top1 = class_index; p1 = probability; }
+                            else if (probability > p2) { top2 = class_index; p2 = probability; }
+                        }
+                        if (workspace.probabilities.size() == 1) p2 = 0.0;
+                        const double decision_margin = p1 - p2;
+                        const bool uncertain = p1 < config.confidence_threshold || decision_margin < config.margin_threshold;
+                        const std::size_t tile_index = local_y * tile_w + local_x;
+                        class_tile[tile_index] = uncertain ? 254 : static_cast<std::uint8_t>(top1);
+                        confidence_tile[tile_index] = static_cast<float>(p1);
+                        margin_tile[tile_index] = static_cast<float>(decision_margin);
+                        if (uncertain) ++result.uncertain_count;
+                        else { ++result.classified_count; ++result.class_counts[top1]; }
+
+                        const std::size_t origin_x = gx * config.stride;
+                        const std::size_t origin_y = gy * config.stride;
+                        const auto map_point = result.metadata.pixel_to_map(origin_x + 3.5, origin_y + 3.5);
+                        CompactDecisionRecord record{};
+                        record.grid_x = static_cast<std::uint32_t>(gx); record.grid_y = static_cast<std::uint32_t>(gy);
+                        record.origin_x = static_cast<std::uint32_t>(origin_x); record.origin_y = static_cast<std::uint32_t>(origin_y);
+                        record.predicted_index = static_cast<std::uint16_t>(top1); record.second_index = static_cast<std::uint16_t>(top2);
+                        record.probability = static_cast<float>(p1); record.second_probability = static_cast<float>(p2);
+                        record.margin = static_cast<float>(decision_margin); record.is_uncertain = uncertain ? 1 : 0;
+                        record_row[local_x] = record;
+                        if (config.write_decision_csv) {
+                            csv << gx << ',' << gy << ',' << origin_x << ',' << origin_y << ','
+                                << std::fixed << std::setprecision(1) << origin_x + 3.5 << ',' << origin_y + 3.5 << ','
+                                << origin_x + 4 << ',' << origin_y + 4 << ',';
+                            if (result.metadata.has_geo) csv << std::setprecision(3) << map_point.first << ',' << map_point.second << ',';
+                            csv << model.class_names[top1] << ',' << std::setprecision(6) << p1 << ','
+                                << (model.class_names.size() > 1 ? model.class_names[top2] : "") << ',' << p2 << ','
+                                << decision_margin << ',' << (uncertain ? "UNCERTAIN" : "CLASSIFIED") << '\n';
+                        }
+                    }
+                    const auto record_offset = static_cast<std::streamoff>(64 +
+                        (gy * grid_width + tile_gx) * sizeof(CompactDecisionRecord));
+                    binary.seekp(record_offset);
+                    binary.write(reinterpret_cast<const char*>(record_row.data()),
+                                 static_cast<std::streamsize>(record_row.size() * sizeof(CompactDecisionRecord)));
+                }
+                if (class_dataset->GetRasterBand(1)->RasterIO(GF_Write, static_cast<int>(tile_gx), static_cast<int>(tile_gy),
+                        static_cast<int>(tile_w), static_cast<int>(tile_h), class_tile.data(), static_cast<int>(tile_w),
+                        static_cast<int>(tile_h), GDT_Byte, 0, 0, nullptr) != CE_None ||
+                    confidence_dataset->GetRasterBand(1)->RasterIO(GF_Write, static_cast<int>(tile_gx), static_cast<int>(tile_gy),
+                        static_cast<int>(tile_w), static_cast<int>(tile_h), confidence_tile.data(), static_cast<int>(tile_w),
+                        static_cast<int>(tile_h), GDT_Float32, 0, 0, nullptr) != CE_None ||
+                    margin_dataset->GetRasterBand(1)->RasterIO(GF_Write, static_cast<int>(tile_gx), static_cast<int>(tile_gy),
+                        static_cast<int>(tile_w), static_cast<int>(tile_h), margin_tile.data(), static_cast<int>(tile_w),
+                        static_cast<int>(tile_h), GDT_Float32, 0, 0, nullptr) != CE_None) {
+                    throw std::runtime_error("GDAL failed to write a streaming decision tile");
+                }
+            }
+        }
+        if (config.write_decision_csv) csv.close();
+        binary.close();
+        if (!binary || (config.write_decision_csv && !csv)) {
+            throw std::runtime_error("failed to finalize incremental dense outputs");
+        }
+
+        // Produce bounded-size PNG views by resampling the primary rasters.
+        const std::size_t preview_w = std::min<std::size_t>(grid_width, 2048);
+        const std::size_t preview_h = std::min<std::size_t>(grid_height, 2048);
+        std::vector<std::uint8_t> class_preview(preview_w * preview_h);
+        std::vector<float> float_preview(preview_w * preview_h);
+        if (class_dataset->GetRasterBand(1)->RasterIO(GF_Read, 0, 0, static_cast<int>(grid_width), static_cast<int>(grid_height),
+                class_preview.data(), static_cast<int>(preview_w), static_cast<int>(preview_h), GDT_Byte, 0, 0, nullptr) != CE_None) {
+            throw std::runtime_error("cannot create bounded class preview");
+        }
+        RgbImage class_png{preview_w, preview_h, std::vector<std::uint8_t>(preview_w * preview_h * 3)};
+        for (std::size_t i = 0; i < class_preview.size(); ++i) {
+            const auto color = get_decision_color(result.palette, class_preview[i], class_preview[i] == 254);
+            std::copy(color.begin(), color.end(), class_png.pixels.begin() + static_cast<std::ptrdiff_t>(i * 3));
+        }
+        save_png_image(output_dir / "class_map.png", class_png);
+        auto save_float_preview = [&](GDALDataset* dataset, const std::filesystem::path& path) {
+            if (dataset->GetRasterBand(1)->RasterIO(GF_Read, 0, 0, static_cast<int>(grid_width), static_cast<int>(grid_height),
+                    float_preview.data(), static_cast<int>(preview_w), static_cast<int>(preview_h), GDT_Float32, 0, 0, nullptr) != CE_None) {
+                throw std::runtime_error("cannot create bounded floating-point preview");
+            }
+            RgbImage image{preview_w, preview_h, std::vector<std::uint8_t>(preview_w * preview_h * 3)};
+            for (std::size_t i = 0; i < float_preview.size(); ++i) {
+                const auto value = static_cast<std::uint8_t>(std::clamp(float_preview[i] * 255.0f, 0.0f, 255.0f));
+                image.pixels[i * 3] = value; image.pixels[i * 3 + 1] = value; image.pixels[i * 3 + 2] = value;
+            }
+            save_png_image(path, image);
+        };
+        save_float_preview(confidence_dataset, output_dir / "confidence.png");
+        save_float_preview(margin_dataset, output_dir / "margin.png");
+
+        std::vector<std::uint8_t> overlay_classes(preview_image.width * preview_image.height);
+        if (class_dataset->GetRasterBand(1)->RasterIO(GF_Read, 0, 0, static_cast<int>(grid_width), static_cast<int>(grid_height),
+                overlay_classes.data(), static_cast<int>(preview_image.width), static_cast<int>(preview_image.height),
+                GDT_Byte, 0, 0, nullptr) != CE_None) {
+            throw std::runtime_error("cannot create streaming overlay preview");
+        }
+        RgbImage overlay = preview_image;
+        for (std::size_t i = 0; i < overlay_classes.size(); ++i) {
+            const auto color = get_decision_color(result.palette, overlay_classes[i], overlay_classes[i] == 254);
+            overlay.pixels[i * 3] = static_cast<std::uint8_t>(0.5 * overlay.pixels[i * 3] + 0.5 * color[0]);
+            overlay.pixels[i * 3 + 1] = static_cast<std::uint8_t>(0.5 * overlay.pixels[i * 3 + 1] + 0.5 * color[1]);
+            overlay.pixels[i * 3 + 2] = static_cast<std::uint8_t>(0.5 * overlay.pixels[i * 3 + 2] + 0.5 * color[2]);
+        }
+        save_png_image(output_dir / "overlay.png", overlay);
+        close_outputs();
+
+        const std::array final_paths{output_dir / "class_map.tif", output_dir / "confidence.tif",
+                                     output_dir / "margin.tif", output_dir / "decisions.bin"};
+        for (std::size_t index = 0; index < partial_paths.size(); ++index) {
+            std::error_code error;
+            std::filesystem::remove(final_paths[index], error);
+            error.clear();
+            std::filesystem::rename(partial_paths[index], final_paths[index], error);
+            if (error) throw std::runtime_error("cannot finalize streaming artifact: " + final_paths[index].string());
+        }
+        if (config.write_decision_csv) {
+            const auto csv_final = output_dir / "classification.csv";
+            std::error_code error;
+            std::filesystem::remove(csv_final, error);
+            error.clear();
+            std::filesystem::rename(csv_partial, csv_final, error);
+            if (error) throw std::runtime_error("cannot finalize streaming artifact: " + csv_final.string());
+        }
+
+        // Aggregate H3 from bounded chunks read back from the binary index.
+        if (result.metadata.has_geo && h3_aggregation_available()) {
+            const std::string model_sha256 = compute_file_sha256(model_path);
+            std::ifstream decisions(output_dir / "decisions.bin", std::ios::binary);
+            decisions.seekg(64);
+            std::map<std::string, H3CellAggregate> merged;
+            constexpr std::size_t chunk_size = 65'536;
+            std::vector<CompactDecisionRecord> records(chunk_size);
+            while (decisions) {
+                decisions.read(reinterpret_cast<char*>(records.data()),
+                               static_cast<std::streamsize>(records.size() * sizeof(CompactDecisionRecord)));
+                const std::size_t count = static_cast<std::size_t>(decisions.gcount()) / sizeof(CompactDecisionRecord);
+                if (count == 0) break;
+                DenseMapResult chunk;
+                chunk.metadata = result.metadata;
+                chunk.decisions.reserve(count);
+                for (std::size_t i = 0; i < count; ++i) {
+                    const auto& record = records[i];
+                    DenseDecision decision;
+                    decision.origin_x = record.origin_x; decision.origin_y = record.origin_y;
+                    const auto point = result.metadata.pixel_to_map(record.origin_x + 3.5, record.origin_y + 3.5);
+                    decision.map_x = point.first; decision.map_y = point.second;
+                    decision.predicted_class = model.class_names[record.predicted_index];
+                    decision.probability = record.probability; decision.margin = record.margin;
+                    decision.is_uncertain = record.is_uncertain != 0;
+                    chunk.decisions.push_back(std::move(decision));
+                }
+                for (const auto& aggregate : aggregate_dense_run_h3(chunk, 9, output_dir.filename().string(),
+                                                                     model_sha256)) {
+                    auto& target = merged[aggregate.h3_index];
+                    if (target.h3_index.empty()) { target = aggregate; continue; }
+                    const std::size_t old_total = target.number_of_decisions;
+                    const std::size_t new_total = old_total + aggregate.number_of_decisions;
+                    target.mean_top1_probability = (target.mean_top1_probability * old_total +
+                        aggregate.mean_top1_probability * aggregate.number_of_decisions) / new_total;
+                    target.mean_margin = (target.mean_margin * old_total +
+                        aggregate.mean_margin * aggregate.number_of_decisions) / new_total;
+                    target.number_of_decisions = new_total;
+                    target.classified_count += aggregate.classified_count;
+                    target.uncertain_count += aggregate.uncertain_count;
+                    for (const auto& [name, value] : aggregate.class_counts) target.class_counts[name] += value;
+                }
+            }
+            std::vector<H3CellAggregate> aggregates;
+            for (auto& [cell, aggregate] : merged) {
+                std::size_t dominant_count = 0;
+                aggregate.dominant_class = "UNCERTAIN";
+                for (const auto& name : model.class_names) {
+                    const auto count = aggregate.class_counts[name];
+                    aggregate.class_proportions[name] = aggregate.number_of_decisions == 0 ? 0.0 :
+                        static_cast<double>(count) / aggregate.number_of_decisions;
+                    if (count > dominant_count) { dominant_count = count; aggregate.dominant_class = name; }
+                }
+                aggregates.push_back(std::move(aggregate));
+            }
+            export_h3_aggregation_csv(aggregates, model.class_names, output_dir / "classification_h3.csv");
+        }
+
+        export_dense_map(result, model, preview_image, model_path, source_path, output_dir);
+        return result;
+    } catch (...) {
+        close_outputs();
+        for (const auto& path : partial_paths) {
+            std::error_code ignored;
+            std::filesystem::remove(path, ignored);
+        }
+        {
+            std::error_code ignored;
+            std::filesystem::remove(csv_partial, ignored);
+        }
+        throw;
+    }
+#endif
 }
 
 } // namespace tinyvision

@@ -160,4 +160,35 @@ void GdalMultibandSource::read_window_into(std::size_t origin_x,
 #endif
 }
 
+void GdalMultibandSource::read_region_into(std::size_t origin_x, std::size_t origin_y,
+                                           std::size_t region_width, std::size_t region_height,
+                                           std::span<double> out_buf) const {
+#ifdef TINYVISION_WITH_GDAL
+    const std::size_t channels = impl_->schema.channels;
+    if (origin_x + region_width > impl_->width || origin_y + region_height > impl_->height ||
+        out_buf.size() != region_width * region_height * channels) {
+        throw std::out_of_range("Sentinel-2 region exceeds raster bounds or output size is invalid");
+    }
+    std::lock_guard lock(impl_->read_mutex);
+    std::vector<double> band_values(region_width * region_height);
+    for (std::size_t channel = 0; channel < impl_->datasets.size(); ++channel) {
+        auto* band = impl_->datasets[channel]->GetRasterBand(1);
+        if (band->RasterIO(GF_Read, static_cast<int>(origin_x), static_cast<int>(origin_y),
+                           static_cast<int>(region_width), static_cast<int>(region_height),
+                           band_values.data(), static_cast<int>(region_width),
+                           static_cast<int>(region_height), GDT_Float64, 0, 0, nullptr) != CE_None) {
+            throw std::runtime_error("GDAL failed to read Sentinel-2 tile with halo");
+        }
+        const auto& normalization = impl_->schema.channel_specs[channel].normalization;
+        for (std::size_t pixel = 0; pixel < band_values.size(); ++pixel) {
+            out_buf[pixel * channels + channel] =
+                band_values[pixel] * normalization.scale + normalization.offset;
+        }
+    }
+#else
+    (void)origin_x; (void)origin_y; (void)region_width; (void)region_height; (void)out_buf;
+    throw std::runtime_error("TinyLogicVision was built without GDAL support");
+#endif
+}
+
 } // namespace tinyvision

@@ -19,6 +19,47 @@ void RgbImageSource::read_window_into(std::size_t origin_x, std::size_t origin_y
     extract_rgb_input_vector_into(image_, origin_x, origin_y, out_buf);
 }
 
+void RgbImageSource::read_region_into(std::size_t origin_x, std::size_t origin_y,
+                                      std::size_t region_width, std::size_t region_height,
+                                      std::span<double> out_buf) const {
+    if (origin_x + region_width > image_.width || origin_y + region_height > image_.height ||
+        out_buf.size() != region_width * region_height * 3) {
+        throw std::out_of_range("RGB region exceeds image bounds or output size is invalid");
+    }
+    for (std::size_t y = 0; y < region_height; ++y) {
+        for (std::size_t x = 0; x < region_width; ++x) {
+            const std::size_t source_index = ((origin_y + y) * image_.width + origin_x + x) * 3;
+            const std::size_t output_index = (y * region_width + x) * 3;
+            for (std::size_t channel = 0; channel < 3; ++channel) {
+                out_buf[output_index + channel] = static_cast<double>(image_.pixels[source_index + channel]) / 255.0;
+            }
+        }
+    }
+}
+
+void TensorSource::read_region_into(std::size_t origin_x, std::size_t origin_y,
+                                    std::size_t region_width, std::size_t region_height,
+                                    std::span<double> out_buf) const {
+    if (origin_x + region_width > tensor_.width || origin_y + region_height > tensor_.height ||
+        out_buf.size() != region_width * region_height * tensor_.channels) {
+        throw std::out_of_range("tensor region exceeds bounds or output size is invalid");
+    }
+    for (std::size_t y = 0; y < region_height; ++y) {
+        for (std::size_t x = 0; x < region_width; ++x) {
+            for (std::size_t channel = 0; channel < tensor_.channels; ++channel) {
+                const double raw = tensor_.get_raw_value(origin_x + x, origin_y + y, channel);
+                const auto& normalization = tensor_.schema.channel_specs[channel].normalization;
+                double value = raw;
+                if (normalization.type == NormalizationType::UINT8_DIV_255) value = raw / 255.0;
+                else if (normalization.type == NormalizationType::LINEAR) {
+                    value = raw * normalization.scale + normalization.offset;
+                }
+                out_buf[(y * region_width + x) * tensor_.channels + channel] = value;
+            }
+        }
+    }
+}
+
 void validate_multiband_alignment(const std::vector<GeoMetadata>& band_metas) {
     if (band_metas.empty()) {
         throw std::invalid_argument("no band metadata provided for alignment check");

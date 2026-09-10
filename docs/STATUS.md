@@ -6,8 +6,9 @@
 experimental evidence          cd0a591 — TV-01B spatial-coverage result
 consolidated baseline          TV-READY-02 — dense RGB baseline frozen
 RGB application                READY — RGB application pipeline implemented & preserved
-Dense RGB                      READY — parallel in-memory engine with 5M-decision safety cap
-Bounded-memory dense streaming NOT IMPLEMENTED — current result storage is O(number of decisions)
+Dense reference engine         READY — in-memory equivalence authority for small test rasters
+Sentinel dense streaming       READY — sequential tile+halo engine; memory bounded by tile size
+Streaming concurrency/batches  NOT IMPLEMENTED — later optimization after deterministic baseline
 CPU/memory optimized path      READY — zero-heap allocation hot inference workspaces (std::span)
 Multichannel foundation        READY — N-channel tensor abstraction (UINT8, UINT16, FLOAT32, FLOAT64)
 Model v2                       READY — format with explicit InputSchema & ChannelSpec

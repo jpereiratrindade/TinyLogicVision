@@ -117,6 +117,7 @@ const el = {
   btnDenseUpload: document.getElementById('btn-dense-upload'),
   denseSelectStride: document.getElementById('dense-select-stride'),
   denseSelectThreads: document.getElementById('dense-select-threads'),
+  denseSelectTileSize: document.getElementById('dense-select-tile-size'),
   denseSchemaCompatibility: document.getElementById('dense-schema-compatibility'),
   denseModelSchema: document.getElementById('dense-model-schema'),
   denseSourceSchema: document.getElementById('dense-source-schema'),
@@ -1466,6 +1467,7 @@ function setupDenseMap() {
     const confidence = parseFloat(el.denseSliderConfidence.value);
     const margin = parseFloat(el.denseSliderMargin.value);
     const threads = parseInt(el.denseSelectThreads.value, 10);
+    const tileSize = parseInt(el.denseSelectTileSize.value, 10);
     const isSentinel = el.denseChkSentinel10m.checked;
     const modelMetadata = selectedModelMetadata();
     const sourceIsSentinel = selectedSourceIsActiveSentinel();
@@ -1481,22 +1483,6 @@ function setupDenseMap() {
       updateDenseSchemaCompatibility();
       return;
     }
-    const sourceWidth = sourceIsSentinel
-      ? Number(state.sentinelDescriptor.native_width || state.sentinelDescriptor.width)
-      : Number(state.imageMeta && state.imageMeta.width);
-    const sourceHeight = sourceIsSentinel
-      ? Number(state.sentinelDescriptor.native_height || state.sentinelDescriptor.height)
-      : Number(state.imageMeta && state.imageMeta.height);
-    if (sourceWidth >= 8 && sourceHeight >= 8) {
-      const gridWidth = Math.floor((sourceWidth - 8) / stride) + 1;
-      const gridHeight = Math.floor((sourceHeight - 8) / stride) + 1;
-      const estimatedDecisions = gridWidth * gridHeight;
-      if (estimatedDecisions > 5000000) {
-        alert(`Grade muito grande para o motor atual em memória: ${estimatedDecisions.toLocaleString('pt-BR')} decisões. Aumente o stride; o limite seguro é 5.000.000.`);
-        return;
-      }
-    }
-
     el.btnRunDenseMap.disabled = true;
     el.denseProgress.classList.remove('hidden');
 
@@ -1511,6 +1497,7 @@ function setupDenseMap() {
           confidence,
           margin,
           threads,
+          tile_size: tileSize,
           is_sentinel_10m: isSentinel,
           bands: sourceIsSentinel ? state.sentinelDescriptor.bands : null,
         }),
@@ -1564,6 +1551,7 @@ function renderDenseMapResults(runId, metadata) {
 
   // Download links
   el.linkDownloadCsv.href = `/api/runs/${runId}/classification.csv`;
+  el.linkDownloadCsv.classList.toggle('hidden', !(metadata.engineering_stats && metadata.engineering_stats.decision_csv_available));
   el.linkDownloadJson.href = `/api/runs/${runId}/run.json`;
   el.linkDownloadOverlay.href = `/api/runs/${runId}/overlay.png`;
   el.linkDownloadClassmap.href = `/api/runs/${runId}/class_map.png`;
@@ -1605,6 +1593,7 @@ function renderDenseMapResults(runId, metadata) {
     dCtx.drawImage(dImg, 0, 0);
   };
   dImg.src = `/api/runs/${runId}/overlay.png`;
+  let activeDenseMode = 'overlay';
 
   // Setup view mode buttons
   const modeBtns = el.denseResultsPanel.querySelectorAll('.btn-mode');
@@ -1623,6 +1612,7 @@ function renderDenseMapResults(runId, metadata) {
       }
       modeBtns.forEach((b) => b.classList.remove('active'));
       btn.classList.add('active');
+      activeDenseMode = mode;
       const srcMap = {
         overlay: `/api/runs/${runId}/overlay.png`,
         class_map: `/api/runs/${runId}/class_map.png`,
@@ -1639,8 +1629,15 @@ function renderDenseMapResults(runId, metadata) {
     const rect = dCanvas.getBoundingClientRect();
     const scaleX = dCanvas.width / rect.width;
     const scaleY = dCanvas.height / rect.height;
-    const clickX = Math.floor((e.clientX - rect.left) * scaleX);
-    const clickY = Math.floor((e.clientY - rect.top) * scaleY);
+    const canvasX = Math.floor((e.clientX - rect.left) * scaleX);
+    const canvasY = Math.floor((e.clientY - rect.top) * scaleY);
+    const gridMode = ['class_map', 'confidence', 'margin'].includes(activeDenseMode);
+    const clickX = gridMode
+      ? Math.floor(canvasX * Number(metadata.grid_width) / dCanvas.width) * Number(metadata.stride)
+      : Math.floor(canvasX * Number(metadata.source_width) / dCanvas.width);
+    const clickY = gridMode
+      ? Math.floor(canvasY * Number(metadata.grid_height) / dCanvas.height) * Number(metadata.stride)
+      : Math.floor(canvasY * Number(metadata.source_height) / dCanvas.height);
 
     try {
       const inspRes = await fetch(`/api/runs/${runId}/inspect?x=${clickX}&y=${clickY}`);

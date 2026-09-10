@@ -19,7 +19,10 @@ int main(int argc, char** argv) {
                   << "  --confidence FLOAT    Minimum top-1 probability threshold [0.0..1.0] (default: 0.0)\n"
                   << "  --margin FLOAT        Minimum margin (top1 - top2) threshold [0.0..1.0] (default: 0.0)\n"
                   << "  --threads N           Number of inference threads (default: auto)\n"
-                  << "  --max-decisions N     In-memory safety limit (default: 5000000; 0 = explicit unlimited)\n"
+                  << "  --tile-width N        Streaming output tile width in decisions (default: 256)\n"
+                  << "  --tile-height N       Streaming output tile height in decisions (default: 256)\n"
+                  << "  --max-decisions N     Legacy in-memory safety limit (GDAL-free builds only)\n"
+                  << "  --decision-csv        Also write the potentially very large per-decision CSV\n"
                   << "  --band-b2 PATH        Native Sentinel-2 B2 10m raster\n"
                   << "  --band-b3 PATH        Native Sentinel-2 B3 10m raster\n"
                   << "  --band-b4 PATH        Native Sentinel-2 B4 10m raster\n"
@@ -49,6 +52,10 @@ int main(int argc, char** argv) {
                 config.threads = static_cast<std::size_t>(std::stoul(argv[++i]));
             } else if (arg == "--max-decisions" && i + 1 < argc) {
                 config.max_decisions = static_cast<std::size_t>(std::stoull(argv[++i]));
+            } else if (arg == "--tile-width" && i + 1 < argc) {
+                config.tile_width = static_cast<std::size_t>(std::stoull(argv[++i]));
+            } else if (arg == "--tile-height" && i + 1 < argc) {
+                config.tile_height = static_cast<std::size_t>(std::stoull(argv[++i]));
             } else if (arg == "--band-b2" && i + 1 < argc) {
                 sentinel_bands[0] = argv[++i];
                 has_sentinel_band[0] = true;
@@ -63,6 +70,8 @@ int main(int argc, char** argv) {
                 has_sentinel_band[3] = true;
             } else if (arg == "--sentinel-10m") {
                 config.sentinel_nominal_10m = true;
+            } else if (arg == "--decision-csv") {
+                config.write_decision_csv = true;
             } else {
                 std::cerr << "tinyvision_map: unknown option " << arg << '\n';
                 return 2;
@@ -86,13 +95,20 @@ int main(int argc, char** argv) {
         if (all_sentinel_bands) {
             tinyvision::GdalMultibandSource source(
                 sentinel_bands[0], sentinel_bands[1], sentinel_bands[2], sentinel_bands[3]);
-            result = tinyvision::classify_dense_source(model, source, config);
+            result = tinyvision::classify_and_export_dense_streaming(
+                model, source, preview_image, config, model_path, image_path, output_dir);
             source_mode = "SENTINEL2_MULTIBAND_NATIVE";
         } else {
+#ifdef TINYVISION_WITH_GDAL
+            tinyvision::RgbImageSource source(preview_image);
+            result = tinyvision::classify_and_export_dense_streaming(
+                model, source, preview_image, config, model_path, image_path, output_dir);
+#else
             result = tinyvision::classify_dense(model, preview_image, config);
+            tinyvision::export_dense_map(result, model, preview_image, model_path, image_path, output_dir);
+#endif
             source_mode = "RGB_IMAGE";
         }
-        tinyvision::export_dense_map(result, model, preview_image, model_path, image_path, output_dir);
 
         std::cout << "TinyLogicVision dense spatial classification\n"
                   << "model=" << model_path.filename().string() << '\n'
