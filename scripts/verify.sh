@@ -88,6 +88,11 @@ run_test "Dense test" dense_test
 run_test "Dense streaming test" dense_streaming_test
 run_test "CLI test" cli_test
 run_test "Web GUI test" web_test
+run_test "Workspace test" workspace_test
+if ctest --test-dir "${verify_build}" -N | grep -Fq "gui_startup_test"; then
+    run_test "GUI startup test" gui_startup_test
+    run_test "GUI workspace test" gui_workspace_test
+fi
 
 run_witness "TV-00 witness" "${verify_build}/tinyvision" \
     "epoch=180 loss=0.000400 accuracy=100.000000%" \

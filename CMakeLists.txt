@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(TinyLogicVision VERSION 0.1.0 LANGUAGES CXX)
+project(TinyLogicVision VERSION 2.0.0 LANGUAGES CXX)
 
 find_package(PNG REQUIRED)
 find_package(JPEG REQUIRED)
@@ -21,6 +21,34 @@ endif()
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+
+option(TINYVISION_BUILD_GUI "Build the Qt Quick workspace launcher" ON)
+if(TINYVISION_BUILD_GUI)
+    find_package(Qt6 6.5 QUIET COMPONENTS Core Gui Qml Quick QuickControls2 Network)
+    if(Qt6_FOUND)
+        qt_standard_project_setup(REQUIRES 6.5)
+        qt_policy(SET QTP0004 NEW)
+        qt_add_executable(tinyvision_gui
+            src/gui/main.cpp
+            src/gui/workspace_bridge.cpp
+            src/gui/workspace_bridge.hpp
+        )
+        set_target_properties(tinyvision_gui PROPERTIES OUTPUT_NAME tinyvision-gui)
+        target_include_directories(tinyvision_gui PRIVATE src/gui)
+        target_link_libraries(tinyvision_gui PRIVATE
+            Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick Qt6::QuickControls2 Qt6::Network)
+        target_compile_definitions(tinyvision_gui PRIVATE
+            TINYVISION_VERSION="${PROJECT_VERSION}"
+            TINYVISION_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+        qt_add_qml_module(tinyvision_gui
+            URI TinyLogicVision
+            VERSION 1.0
+            QML_FILES qml/Main.qml
+        )
+    else()
+        message(WARNING "Qt 6.5 Quick was not found; tinyvision-gui is disabled")
+    endif()
+endif()
 
 add_library(tinyvision_core
     src/model.cpp
@@ -150,3 +178,14 @@ add_test(NAME dense_streaming_test COMMAND dense_streaming_test)
 
 add_test(NAME cli_test COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/tests/cli_test.sh")
 add_test(NAME web_test COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/tests/web_test.py")
+add_test(NAME workspace_test COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/tests/workspace_test.py")
+if(TARGET tinyvision_gui)
+    add_test(NAME gui_startup_test COMMAND tinyvision_gui --smoke)
+    set_tests_properties(gui_startup_test PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QSG_RHI_BACKEND=software")
+    add_test(NAME gui_workspace_test
+        COMMAND ${CMAKE_COMMAND}
+            -DGUI=$<TARGET_FILE:tinyvision_gui>
+            -DTEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/gui-test-workspace
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/gui_workspace.cmake)
+endif()

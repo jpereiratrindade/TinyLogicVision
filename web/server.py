@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-TinyLogicVision Local Web Application Server v0.1
+TinyLogicVision Local Web Application Server v2.0
 Orchestrates patch extraction, dataset authoring, model training,
 classification, and evaluation using the TinyLogicVision CLI authority.
 """
@@ -23,6 +23,8 @@ import time
 import urllib.parse
 from pathlib import Path
 
+from workspace import initialize_workspace, resolve_workspace
+
 # Optional Pillow and GDAL support
 try:
     from PIL import Image as PILImage
@@ -41,16 +43,22 @@ except Exception:
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CLI_BIN = REPO_ROOT / "bin" / "tinyvision"
 STATIC_DIR = Path(__file__).resolve().parent / "static"
-RUNTIME_ROOT = REPO_ROOT / ".tinyvision"
-
+RUNTIME_ROOT = resolve_workspace(None, REPO_ROOT)
 UPLOADS_DIR = RUNTIME_ROOT / "uploads"
 DATASETS_DIR = RUNTIME_ROOT / "datasets"
 MODELS_DIR = RUNTIME_ROOT / "models"
 RUNS_DIR = RUNTIME_ROOT / "runs"
 MANIFESTS_DIR = RUNTIME_ROOT / "manifests"
 
-for d in (UPLOADS_DIR, DATASETS_DIR, MODELS_DIR, RUNS_DIR, MANIFESTS_DIR):
-    d.mkdir(parents=True, exist_ok=True)
+
+def configure_workspace(path: str | Path | None):
+    global RUNTIME_ROOT, UPLOADS_DIR, DATASETS_DIR, MODELS_DIR, RUNS_DIR, MANIFESTS_DIR
+    RUNTIME_ROOT = initialize_workspace(resolve_workspace(path, REPO_ROOT))
+    UPLOADS_DIR = RUNTIME_ROOT / "uploads"
+    DATASETS_DIR = RUNTIME_ROOT / "datasets"
+    MODELS_DIR = RUNTIME_ROOT / "models"
+    RUNS_DIR = RUNTIME_ROOT / "runs"
+    MANIFESTS_DIR = RUNTIME_ROOT / "manifests"
 
 SAFE_NAME_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
 
@@ -979,7 +987,7 @@ class TinyVisionRequestHandler(http.server.BaseHTTPRequestHandler):
 
         dataset_dir = DATASETS_DIR / dataset_name
         if not dataset_dir.is_dir():
-            self.send_error_json(f"Dataset '{dataset_name}' não encontrado em .tinyvision/datasets/", 400)
+            self.send_error_json(f"Dataset '{dataset_name}' não encontrado em {DATASETS_DIR}", 400)
             return
 
         if not (dataset_dir / "train").is_dir():
@@ -1909,7 +1917,15 @@ def main():
     parser.add_argument("--host", default="127.0.0.1", help="Host interface (strictly 127.0.0.1)")
     parser.add_argument("--port", type=int, default=8080, help="Port to listen on (default 8080)")
     parser.add_argument("--no-browser", action="store_true", help="Do not open browser automatically")
+    parser.add_argument("--workspace", default=None,
+                        help="Workspace directory (default: repository .tinyvision)")
     args = parser.parse_args()
+
+    try:
+        configure_workspace(args.workspace)
+    except (OSError, ValueError) as error:
+        print(f"Error: {error}", file=sys.stderr)
+        sys.exit(2)
 
     # Enforce loopback binding only
     if args.host not in ("127.0.0.1", "localhost"):
@@ -1931,9 +1947,9 @@ def main():
 
     url = f"http://{host}:{port}/"
     print("=" * 60)
-    print("  TinyLogicVision Local Web GUI v0.1")
+    print("  TinyLogicVision Local Web GUI v2.0")
     print(f"  Running locally at: {url}")
-    print("  Workspace root:     .tinyvision/")
+    print(f"  Workspace root:     {RUNTIME_ROOT}")
     print("  Bound interface:    127.0.0.1 (Strictly local, no external network)")
     print("=" * 60)
     print("Press Ctrl+C to stop.")

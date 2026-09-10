@@ -17,11 +17,20 @@ fail() {
 
 # 1. Test help outputs
 "${cli_bin}" --help > "${tmp_dir}/help.log" 2>&1 || fail "tinyvision --help failed"
-grep -Fq "TinyLogicVision CLI v0.1" "${tmp_dir}/help.log" || fail "--help missing header"
+grep -Fq "TinyLogicVision CLI v2.0" "${tmp_dir}/help.log" || fail "--help missing header"
 grep -Fq "Usage:" "${tmp_dir}/help.log" || fail "--help missing usage"
 
 "${cli_bin}" -h > "${tmp_dir}/h.log" 2>&1 || fail "tinyvision -h failed"
-grep -Fq "TinyLogicVision CLI v0.1" "${tmp_dir}/h.log" || fail "-h missing header"
+grep -Fq "TinyLogicVision CLI v2.0" "${tmp_dir}/h.log" || fail "-h missing header"
+
+# Workspace creation is explicit and isolated from the repository default.
+workspace_dir="${tmp_dir}/workspace"
+"${cli_bin}" workspace init "${workspace_dir}" > "${tmp_dir}/workspace.log" 2>&1 \
+    || fail "workspace init failed"
+grep -Fq "workspace ready:" "${tmp_dir}/workspace.log" || fail "workspace init missing confirmation"
+for entry in workspace.json uploads datasets models runs manifests; do
+    [ -e "${workspace_dir}/${entry}" ] || fail "workspace missing ${entry}"
+done
 
 # 2. Test no args and invalid commands
 if "${cli_bin}" > "${tmp_dir}/no_args.log" 2>&1; then

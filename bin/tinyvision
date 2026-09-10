@@ -1,20 +1,22 @@
 #!/usr/bin/env bash
 
-# TinyLogicVision canonical application CLI v0.1
+# TinyLogicVision canonical application CLI v2.0
 
 repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 build_dir="${TINYVISION_BUILD_DIR:-${repo_root}/build}"
 
 print_usage() {
     cat <<'EOF'
-TinyLogicVision CLI v0.1
+TinyLogicVision CLI v2.0
 
 Usage:
   tinyvision train DATASET_ROOT MODEL_PATH
   tinyvision classify MODEL_PATH IMAGE_PATH
   tinyvision evaluate MODEL_PATH SPLIT_DIRECTORY
   tinyvision map MODEL_PATH IMAGE_PATH OUTPUT_DIR [options]
-  tinyvision web [--port PORT] [--host HOST]
+  tinyvision workspace init PATH
+  tinyvision web [--workspace PATH] [--port PORT] [--host HOST]
+  tinyvision gui [WORKSPACE]
   tinyvision verify
   tinyvision --help | -h
 
@@ -23,7 +25,9 @@ Commands:
   classify    Classify a single PNG/JPEG image using a trained model
   evaluate    Evaluate a trained model on a labeled split directory (e.g. dev/ or probe/)
   map         Run dense spatial classification across an image grid
-  web         Launch the local web GUI on 127.0.0.1
+  workspace   Create or validate an isolated workspace
+  web         Launch the local web GUI for a workspace on 127.0.0.1
+  gui         Launch the Qt Quick workspace desktop
   verify      Run the complete project verification suite
 
 Options:
@@ -114,6 +118,28 @@ case "${cmd}" in
             exit 1
         fi
         exec python3 "${server_script}" "$@"
+        ;;
+    workspace)
+        workspace_script="${repo_root}/web/workspace.py"
+        if [ "${1:-}" != "init" ] || [ "$#" -ne 2 ]; then
+            printf 'usage: tinyvision workspace init PATH\n' >&2
+            exit 2
+        fi
+        exec python3 "${workspace_script}" "$@"
+        ;;
+    gui)
+        target_bin="${build_dir}/tinyvision-gui"
+        if ! check_executable "${target_bin}" "Build the Qt GUI first: cmake -S '${repo_root}' -B '${build_dir}' -G Ninja -DTINYVISION_BUILD_GUI=ON && cmake --build '${build_dir}' --target tinyvision-gui"; then
+            exit 1
+        fi
+        if [ "$#" -gt 1 ]; then
+            printf 'usage: tinyvision gui [WORKSPACE]\n' >&2
+            exit 2
+        fi
+        if [ "$#" -eq 1 ]; then
+            exec "${target_bin}" --workspace "$1"
+        fi
+        exec "${target_bin}"
         ;;
     verify)
         verify_script="${repo_root}/scripts/verify.sh"
