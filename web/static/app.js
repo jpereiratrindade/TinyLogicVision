@@ -150,6 +150,12 @@ const el = {
   denseCanvas: document.getElementById('dense-canvas'),
   denseCanvasContainer: document.getElementById('dense-canvas-container'),
   denseCrosshair: document.getElementById('dense-crosshair'),
+  sceneStatTotal: document.getElementById('scene-stat-total'),
+  sceneStatClassified: document.getElementById('scene-stat-classified'),
+  sceneStatUncertain: document.getElementById('scene-stat-uncertain'),
+  sceneClassDistribution: document.getElementById('scene-class-distribution'),
+  sceneStatGrid: document.getElementById('scene-stat-grid'),
+  sceneStatThresholds: document.getElementById('scene-stat-thresholds'),
   denseZoomOut: document.getElementById('dense-zoom-out'),
   denseZoomIn: document.getElementById('dense-zoom-in'),
   denseZoomFit: document.getElementById('dense-zoom-fit'),
@@ -1653,6 +1659,7 @@ function renderDenseMapResults(runId, metadata, persistence = {}) {
   el.btnCopyRunPath.onclick = () => copyTextToClipboard(runDirectory, 'Diretório da execução copiado.');
   el.denseTotalDecisions.textContent = `${metadata.decision_count || 0} decisões`;
   el.denseContextInfo.textContent = `Stride ${metadata.stride || 1} • Suporte 8x8`;
+  renderDenseSceneStatistics(metadata);
 
   // Download links
   el.linkDownloadCsv.href = `/api/runs/${runId}/classification.csv`;
@@ -1930,6 +1937,53 @@ function renderDenseMapResults(runId, metadata, persistence = {}) {
       el.denseCanvasContainer.releasePointerCapture(event.pointerId);
     }
   };
+}
+
+function renderDenseSceneStatistics(metadata) {
+  const summary = metadata.summary || {};
+  const total = Number(summary.total_decisions ?? metadata.decision_count ?? 0);
+  const classified = Number(summary.classified_count ?? 0);
+  const uncertain = Number(summary.uncertain_count ?? Math.max(0, total - classified));
+  const percentage = (value) => total > 0 ? (100 * value / total) : 0;
+  const formatCount = (value) => Number(value || 0).toLocaleString('pt-BR');
+  const formatPercentage = (value) => `${percentage(value).toFixed(2).replace('.', ',')}%`;
+
+  el.sceneStatTotal.textContent = formatCount(total);
+  el.sceneStatTotal.title = String(total);
+  el.sceneStatClassified.textContent = `${formatCount(classified)} · ${formatPercentage(classified)}`;
+  el.sceneStatClassified.title = `${classified} decisões classificadas`;
+  el.sceneStatUncertain.textContent = `${formatCount(uncertain)} · ${formatPercentage(uncertain)}`;
+  el.sceneStatUncertain.title = `${uncertain} decisões incertas`;
+
+  el.sceneClassDistribution.innerHTML = '';
+  const classCounts = summary.class_counts || {};
+  const paletteClasses = (metadata.palette && metadata.palette.classes) ||
+    (metadata.classes || []).map((name, index) => ({ name, index, color: '#64748b' }));
+  paletteClasses.forEach((entry) => {
+    const count = Number(classCounts[entry.name] || 0);
+    const row = document.createElement('div');
+    row.className = 'scene-class-row';
+    const label = document.createElement('span');
+    label.className = 'scene-class-label';
+    label.textContent = entry.name;
+    label.title = entry.name;
+    const value = document.createElement('span');
+    value.className = 'scene-class-value';
+    value.textContent = `${formatCount(count)} · ${formatPercentage(count)}`;
+    const bar = document.createElement('div');
+    bar.className = 'scene-class-bar';
+    const fill = document.createElement('span');
+    fill.style.width = `${percentage(count)}%`;
+    fill.style.backgroundColor = entry.color || '#64748b';
+    bar.appendChild(fill);
+    row.append(label, value, bar);
+    el.sceneClassDistribution.appendChild(row);
+  });
+
+  el.sceneStatGrid.textContent = `Grade: ${formatCount(metadata.grid_width)} × ${formatCount(metadata.grid_height)} · stride ${metadata.stride || 1}`;
+  const confidence = Number(metadata.confidence_threshold ?? 0).toFixed(2);
+  const margin = Number(metadata.margin_threshold ?? 0).toFixed(2);
+  el.sceneStatThresholds.textContent = `Limiares: probabilidade ≥ ${confidence} · margem ≥ ${margin}`;
 }
 
 // 10. Async Jobs Monitor

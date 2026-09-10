@@ -102,6 +102,7 @@ def main():
             assert 'id="dense-workspace-path"' in html
             assert 'id="dense-persistence-status"' in html
             assert 'id="dense-saved-runs"' in html
+            assert 'id="scene-class-distribution"' in html
 
         with urllib.request.urlopen(f"{base_url}/style.css") as res:
             assert res.status == 200
@@ -114,6 +115,7 @@ def main():
             assert "setDenseScale" in app_js
             assert "${c.index}" in app_js
             assert "function deleteRoi" in app_js
+            assert "function renderDenseSceneStatistics" in app_js
 
         # 2. Test Path Traversal Protection
         print("Testing path traversal security...")
@@ -444,6 +446,8 @@ def main():
                         assert len(run_meta["palette"]["classes"]) == 3
                         assert run_meta["palette"]["uncertain"]["color"] == "#808080"
                         assert run_meta["geospatial"]["available"] is False
+                        assert run_meta["summary"]["total_decisions"] == 49
+                        assert sum(run_meta["summary"]["class_counts"].values()) + run_meta["summary"]["uncertain_count"] == 49
 
             with urllib.request.urlopen(f"{base_url}/api/provenance") as res:
                 assert res.status == 200

@@ -643,6 +643,29 @@
 
             <!-- Side Inspector & Legend -->
             <div class="dense-side-panel">
+              <!-- Whole-scene statistics, distinct from point inspection -->
+              <div class="scene-stats-card">
+                <h4>📊 Estatísticas da Cena Classificada</h4>
+                <div class="scene-stats-metrics">
+                  <div class="scene-stat-metric">
+                    <span>Total de decisões</span>
+                    <strong id="scene-stat-total">-</strong>
+                  </div>
+                  <div class="scene-stat-metric">
+                    <span>Classificadas</span>
+                    <strong id="scene-stat-classified" class="text-emerald">-</strong>
+                  </div>
+                  <div class="scene-stat-metric">
+                    <span>Incertas</span>
+                    <strong id="scene-stat-uncertain" class="text-amber">-</strong>
+                  </div>
+                </div>
+                <div id="scene-class-distribution" class="scene-class-distribution"></div>
+                <div id="scene-stat-grid" class="scene-stat-note">Grade: -</div>
+                <div id="scene-stat-thresholds" class="scene-stat-note">Limiares: -</div>
+                <small class="text-dim">Percentuais calculados sobre decisões da grade; não representam estimativa calibrada de área.</small>
+              </div>
+
               <!-- Spatial Inspector Card -->
               <div class="inspector-card">
                 <h4>🎯 Inspeção Espacial & Georreferenciada (O(1))</h4>

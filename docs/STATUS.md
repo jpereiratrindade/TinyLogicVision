@@ -61,6 +61,8 @@ NATURAL APP PROBE              EXPLORATORY / NOT CLAIM-BEARING
   image inspection, nominal 10m/px resolution declaration vs display resolution tagging, strict ROI-level split integrity annotation,
   exact 8x8 patch extraction with provenance manifest generation, and integrated training,
   classification, dense mapping with interactive spatial inspection, and split evaluation;
+- a whole-scene statistics panel that separates aggregate class/uncertainty
+  distributions from the binary-indexed decision inspected at the mouse position;
 - isolated selectable workspace roots, governed by `tinylogicvision.workspace/v1`,
   for uploads, datasets, models, runs, and manifests;
 - an optional Qt Quick desktop launcher (`./bin/tinyvision gui [WORKSPACE]`) that

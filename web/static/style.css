@@ -1375,7 +1375,7 @@ body {
   gap: 12px;
 }
 
-.inspector-card, .legend-card, .export-links-card {
+.inspector-card, .legend-card, .export-links-card, .scene-stats-card {
   background: var(--bg-secondary);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-sm);
@@ -1385,12 +1385,97 @@ body {
   gap: 10px;
 }
 
-.inspector-card h4, .legend-card h4, .export-links-card h4 {
+.inspector-card h4, .legend-card h4, .export-links-card h4, .scene-stats-card h4 {
   font-size: 13px;
   font-weight: 700;
   color: var(--text-main);
   border-bottom: 1px solid var(--border-color);
   padding-bottom: 6px;
+}
+
+.scene-stats-metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.scene-stat-metric:first-child {
+  grid-column: 1 / -1;
+}
+
+.scene-stat-metric {
+  min-width: 0;
+  padding: 7px 6px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  background: var(--bg-primary);
+  text-align: center;
+}
+
+.scene-stat-metric span,
+.scene-stat-metric strong {
+  display: block;
+}
+
+.scene-stat-metric span {
+  color: var(--text-dim);
+  font-size: 9px;
+  text-transform: uppercase;
+}
+
+.scene-stat-metric strong {
+  margin-top: 3px;
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-overflow: ellipsis;
+}
+
+.scene-class-distribution {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.scene-class-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 4px 8px;
+  align-items: center;
+}
+
+.scene-class-label,
+.scene-class-value {
+  overflow: hidden;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scene-class-value {
+  font-family: var(--font-mono);
+  text-align: right;
+}
+
+.scene-class-bar {
+  grid-column: 1 / -1;
+  height: 6px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--bg-primary);
+}
+
+.scene-class-bar > span {
+  display: block;
+  height: 100%;
+  min-width: 0;
+  border-radius: inherit;
+}
+
+.scene-stat-note {
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
 }
 
 .inspector-field-group, .inspector-decision-box {

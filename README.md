@@ -64,7 +64,7 @@ O fluxo de trabalho interativo unificado oferece:
 3. **Regiões de Interesse (ROIs) & Particionamento H3**: Desenhe ou exclua individualmente ROIs no canvas, com validação de **1 ROI = 1 Split** e opção de **Particionamento Espacial H3** (1 célula H3 = 1 split) para prevenir spatial leakage;
 4. **Extração de Patches & Proveniência**: Extraia patches exatos de $8 \times 8$ (ou tensores nativos `.tvp`) com manifesto e grafo de proveniência RIT (`manifest.csv`, `dataset.json`, `provenance.json`);
 5. **Treinamento Síncrono ou Assíncrono**: Treine modelos v1/v2 em C++ (`./bin/tinyvision train`) em segundo plano com monitoramento em tempo real via aba de Jobs;
-6. **Classificação Densa, GeoTIFF & Agregação H3**: Execute o streaming da cena inteira (`./bin/tinyvision map`) por tiles com halo, memória limitada pelo tile, inspeção $O(1)$ por seek binário, GeoTIFFs incrementais e H3 oficial;
+6. **Classificação Densa, GeoTIFF & Agregação H3**: Execute o streaming da cena inteira (`./bin/tinyvision map`) por tiles com halo, memória limitada pelo tile, estatísticas globais por classe, inspeção pontual $O(1)$ por seek binário, GeoTIFFs incrementais e H3 oficial;
 7. **Classificar & Avaliar**: Classifique amostras individuais e avalie splits mantendo o `PROBE` isolado.
 
 ### 3. Linha de Comando (CLI)
