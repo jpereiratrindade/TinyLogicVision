@@ -417,6 +417,12 @@ def main():
                 assert persisted_run["persistent"] is True
                 assert persisted_run["complete"] is True
 
+            with urllib.request.urlopen(f"{base_url}/api/runs/{run_id}/status") as res:
+                reopened = json.loads(res.read().decode("utf-8"))
+                assert reopened["success"] is True
+                assert reopened["run_id"] == run_id
+                assert reopened["metadata"]["decision_count"] == metadata["decision_count"]
+
             # Verify artifact delivery via HTTP and parse run.json semantics
             print("Verifying map artifacts delivery over HTTP and contract in run.json...")
             for art in ("class_map.png", "confidence.png", "margin.png", "overlay.png", "run.json",

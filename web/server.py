@@ -493,7 +493,9 @@ class TinyVisionRequestHandler(http.server.BaseHTTPRequestHandler):
             run_id = sanitize_name(parts[0])
             if len(parts) > 1 and parts[1]:
                 sub = parts[1]
-                if sub.startswith("inspect"):
+                if sub == "status":
+                    self.handle_api_run_status(run_id)
+                elif sub == "inspect":
                     self.handle_api_run_inspect(run_id, query)
                 else:
                     self.handle_api_run_artifact(run_id, sub)
