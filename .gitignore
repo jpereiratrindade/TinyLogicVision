@@ -5,6 +5,7 @@ build/
 *.dylib
 *.exe
 .tinyvision/
+workspaces/
 *.tlv
 TinyLogicVision-*/
 forest_sentinel.png

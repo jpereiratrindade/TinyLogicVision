@@ -572,6 +572,29 @@ class TinyVisionRequestHandler(http.server.BaseHTTPRequestHandler):
 
         datasets = self.get_datasets_list()
         models = self.get_models_list()
+        runs = []
+        for run_file in RUNS_DIR.glob("*/run.json"):
+            try:
+                with open(run_file, "r", encoding="utf-8") as stream:
+                    metadata = json.load(stream)
+                run_dir = run_file.parent
+                runs.append({
+                    "run_id": run_dir.name,
+                    "run_directory": str(run_dir),
+                    "timestamp": metadata.get("timestamp", ""),
+                    "decision_count": metadata.get("decision_count", 0),
+                    "input_modality": metadata.get("input_modality", "UNKNOWN"),
+                    "source_image_path": metadata.get("source_image_path", ""),
+                    "persistent": True,
+                    "complete": all((run_dir / name).is_file() for name in
+                                    ("run.json", "decisions.bin", "class_map.png", "overlay.png")),
+                    "modified_ns": run_file.stat().st_mtime_ns,
+                })
+            except (OSError, ValueError, TypeError):
+                continue
+        runs.sort(key=lambda item: item["modified_ns"], reverse=True)
+        for run in runs:
+            run.pop("modified_ns", None)
 
         self.send_json({
             "success": True,
@@ -581,6 +604,7 @@ class TinyVisionRequestHandler(http.server.BaseHTTPRequestHandler):
             "uploads": uploads,
             "datasets": datasets,
             "models": models,
+            "runs": runs[:500],
         })
 
     def handle_api_image(self, query):
@@ -1349,6 +1373,12 @@ class TinyVisionRequestHandler(http.server.BaseHTTPRequestHandler):
             "success": True,
             "run_id": run_id,
             "metadata": metadata,
+            "persistence": {
+                "persistent": True,
+                "workspace_root": str(RUNTIME_ROOT),
+                "run_directory": str(out_dir),
+                "retention": "UNTIL_EXPLICIT_DELETION",
+            },
             "artifacts": {
                 "class_map": f"/api/runs/{run_id}/class_map.png",
                 "confidence": f"/api/runs/{run_id}/confidence.png",

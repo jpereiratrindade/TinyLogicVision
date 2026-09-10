@@ -28,6 +28,8 @@ const state = {
   models: [],
   activeJobId: null,
   jobsPollingInterval: null,
+  runtimeRoot: null,
+  runs: [],
 };
 
 // Elements
@@ -125,6 +127,12 @@ const el = {
   denseModelSchema: document.getElementById('dense-model-schema'),
   denseSourceSchema: document.getElementById('dense-source-schema'),
   denseSchemaStatus: document.getElementById('dense-schema-status'),
+  denseWorkspacePath: document.getElementById('dense-workspace-path'),
+  denseOutputPreview: document.getElementById('dense-output-preview'),
+  btnCopyWorkspacePath: document.getElementById('btn-copy-workspace-path'),
+  denseSavedRuns: document.getElementById('dense-saved-runs'),
+  btnOpenSavedRun: document.getElementById('btn-open-saved-run'),
+  denseSavedRunsCount: document.getElementById('dense-saved-runs-count'),
   denseSliderConfidence: document.getElementById('dense-slider-confidence'),
   denseValConfidence: document.getElementById('dense-val-confidence'),
   denseSliderMargin: document.getElementById('dense-slider-margin'),
@@ -135,6 +143,10 @@ const el = {
   denseProgress: document.getElementById('dense-progress'),
   denseProgressText: document.getElementById('dense-progress-text'),
   denseResultsPanel: document.getElementById('dense-results-panel'),
+  denseRunId: document.getElementById('dense-run-id'),
+  denseRunPath: document.getElementById('dense-run-path'),
+  densePersistenceStatus: document.getElementById('dense-persistence-status'),
+  btnCopyRunPath: document.getElementById('btn-copy-run-path'),
   denseCanvas: document.getElementById('dense-canvas'),
   denseCanvasContainer: document.getElementById('dense-canvas-container'),
   denseCrosshair: document.getElementById('dense-crosshair'),
@@ -1519,6 +1531,30 @@ function setupDenseMap() {
     el.denseSelectModel.addEventListener('change', updateDenseSchemaCompatibility);
   }
 
+  if (el.denseSavedRuns && el.btnOpenSavedRun) {
+    el.denseSavedRuns.addEventListener('change', () => {
+      el.btnOpenSavedRun.disabled = !el.denseSavedRuns.value;
+    });
+    el.btnOpenSavedRun.addEventListener('click', async () => {
+      const runId = el.denseSavedRuns.value;
+      if (!runId) return;
+      try {
+        const response = await fetch(`/api/runs/${encodeURIComponent(runId)}/status`);
+        const data = await response.json();
+        if (!data.success) throw new Error(data.error || 'Execução persistida indisponível');
+        const saved = state.runs.find((run) => run.run_id === runId) || {};
+        renderDenseMapResults(runId, data.metadata, {
+          persistent: true,
+          run_directory: saved.run_directory || `${state.runtimeRoot}/runs/${runId}`,
+          retention: 'UNTIL_EXPLICIT_DELETION',
+        });
+        el.denseResultsPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      } catch (error) {
+        alert(`Erro ao reabrir classificação: ${error.message}`);
+      }
+    });
+  }
+
   el.btnRunDenseMap.addEventListener('click', async () => {
     const model = el.denseSelectModel.value;
     const imagePath = el.denseSelectImage.value;
@@ -1564,7 +1600,8 @@ function setupDenseMap() {
       const data = await res.json();
       if (!data.success) throw new Error(data.error || 'Falha na classificação densa');
 
-      renderDenseMapResults(data.run_id, data.metadata);
+      renderDenseMapResults(data.run_id, data.metadata, data.persistence);
+      refreshWorkspaceStatus();
     } catch (err) {
       alert(`Erro: ${err.message}`);
     } finally {
@@ -1603,8 +1640,17 @@ function updateDenseSchemaCompatibility() {
   el.denseSchemaStatus.textContent = compatible ? 'SCHEMA COMPATÍVEL' : 'SCHEMA INCOMPATÍVEL';
 }
 
-function renderDenseMapResults(runId, metadata) {
+function renderDenseMapResults(runId, metadata, persistence = {}) {
   el.denseResultsPanel.classList.remove('hidden');
+  const runDirectory = persistence.run_directory ||
+    (state.runtimeRoot ? `${state.runtimeRoot}/runs/${runId}` : `runs/${runId}`);
+  el.denseRunId.textContent = runId;
+  el.denseRunPath.textContent = runDirectory;
+  el.denseRunPath.title = runDirectory;
+  const isPersistent = persistence.persistent !== false;
+  el.densePersistenceStatus.textContent = isPersistent ? 'SALVA NO DISCO' : 'TEMPORÁRIA';
+  el.densePersistenceStatus.className = `badge ${isPersistent ? 'badge-success' : 'badge-warning'}`;
+  el.btnCopyRunPath.onclick = () => copyTextToClipboard(runDirectory, 'Diretório da execução copiado.');
   el.denseTotalDecisions.textContent = `${metadata.decision_count || 0} decisões`;
   el.denseContextInfo.textContent = `Stride ${metadata.stride || 1} • Suporte 8x8`;
 
@@ -1983,13 +2029,51 @@ async function refreshWorkspaceStatus() {
     const res = await fetch('/api/status');
     const data = await res.json();
     if (!data.success) return;
+    state.runtimeRoot = data.runtime_root;
     if (el.activeWorkspacePath) {
       el.activeWorkspacePath.textContent = `127.0.0.1 • ${data.runtime_root}`;
       el.activeWorkspacePath.title = data.runtime_root;
     }
+    if (el.denseWorkspacePath) {
+      el.denseWorkspacePath.textContent = data.runtime_root;
+      el.denseWorkspacePath.title = data.runtime_root;
+    }
+    if (el.denseOutputPreview) {
+      el.denseOutputPreview.textContent = `${data.runtime_root}/runs/<run_id>/`;
+    }
+    if (el.btnCopyWorkspacePath) {
+      el.btnCopyWorkspacePath.onclick = () => copyTextToClipboard(data.runtime_root, 'Caminho do workspace copiado.');
+    }
 
     state.datasets = data.datasets || [];
     state.models = data.models || [];
+    state.runs = data.runs || [];
+
+    if (el.denseSavedRuns) {
+      const selectedRun = el.denseSavedRuns.value;
+      el.denseSavedRuns.innerHTML = '';
+      if (state.runs.length === 0) {
+        const option = document.createElement('option');
+        option.value = '';
+        option.textContent = 'Nenhuma classificação salva neste workspace';
+        el.denseSavedRuns.appendChild(option);
+      } else {
+        state.runs.forEach((run) => {
+          const option = document.createElement('option');
+          option.value = run.run_id;
+          const count = Number(run.decision_count || 0).toLocaleString('pt-BR');
+          option.textContent = `${run.run_id} · ${count} decisões${run.complete ? '' : ' · INCOMPLETA'}`;
+          el.denseSavedRuns.appendChild(option);
+        });
+        if (selectedRun && state.runs.some((run) => run.run_id === selectedRun)) {
+          el.denseSavedRuns.value = selectedRun;
+        }
+      }
+      el.btnOpenSavedRun.disabled = !el.denseSavedRuns.value;
+    }
+    if (el.denseSavedRunsCount) {
+      el.denseSavedRunsCount.textContent = `${state.runs.length} salvas`;
+    }
 
     // Populate dataset selects
     const updateSelect = (selectEl, items, key, textKey) => {
@@ -2042,6 +2126,15 @@ async function refreshWorkspaceStatus() {
     renderRitProvenance();
   } catch (err) {
     // status fetch failed
+  }
+}
+
+async function copyTextToClipboard(value, confirmation) {
+  try {
+    await navigator.clipboard.writeText(value);
+    if (confirmation) console.info(confirmation);
+  } catch (error) {
+    window.prompt('Copie o caminho:', value);
   }
 }
 

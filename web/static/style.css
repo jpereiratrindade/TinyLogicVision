@@ -1025,6 +1025,80 @@ body {
   color: #fb7185;
 }
 
+.dense-workspace-context,
+.dense-run-persistence {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid rgba(16, 185, 129, 0.38);
+  border-radius: var(--radius-sm);
+  background: rgba(6, 78, 59, 0.12);
+}
+
+.dense-workspace-icon {
+  font-size: 20px;
+}
+
+.dense-workspace-details,
+.dense-run-directory {
+  min-width: 0;
+}
+
+.dense-workspace-label {
+  display: block;
+  margin-bottom: 3px;
+  color: #6ee7b7;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.dense-workspace-details > code,
+.dense-run-directory code {
+  display: block;
+  overflow: hidden;
+  color: #bae6fd;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dense-workspace-details small {
+  display: block;
+  margin-top: 4px;
+  color: var(--text-muted);
+}
+
+.dense-run-persistence {
+  grid-template-columns: minmax(170px, auto) minmax(260px, 1fr) auto auto;
+  background: rgba(14, 116, 144, 0.1);
+  border-color: rgba(34, 211, 238, 0.35);
+}
+
+.dense-run-directory > span {
+  color: var(--text-dim);
+  font-size: 10px;
+}
+
+.dense-saved-runs-row {
+  display: grid;
+  grid-template-columns: auto minmax(260px, 1fr) auto auto;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  background: var(--bg-primary);
+}
+
+.dense-saved-runs-row label {
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+}
+
 .flex-row-gap {
   display: flex;
   gap: 8px;
@@ -1857,6 +1931,12 @@ body {
   .workspace-grid,
   .dense-viewer-layout,
   .dense-sliders-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .dense-workspace-context,
+  .dense-run-persistence,
+  .dense-saved-runs-row {
     grid-template-columns: minmax(0, 1fr);
   }
 

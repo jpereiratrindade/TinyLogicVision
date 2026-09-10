@@ -99,6 +99,9 @@ def main():
             assert 'id="dense-zoom-fit"' in html
             assert 'id="dense-toggle-expand"' in html
             assert 'id="roi-list"' in html
+            assert 'id="dense-workspace-path"' in html
+            assert 'id="dense-persistence-status"' in html
+            assert 'id="dense-saved-runs"' in html
 
         with urllib.request.urlopen(f"{base_url}/style.css") as res:
             assert res.status == 200
@@ -403,6 +406,16 @@ def main():
                 assert metadata["engineering_stats"]["implementation_mode"] == "BOUNDED_TILE_STREAMING"
                 assert metadata["engineering_stats"]["memory_bound_scope"] == "TILE_PLUS_HALO"
                 assert metadata["engineering_stats"]["max_decisions"] is None
+                persistence = dense_resp["persistence"]
+                assert persistence["persistent"] is True
+                assert persistence["retention"] == "UNTIL_EXPLICIT_DELETION"
+                assert Path(persistence["run_directory"]).name == run_id
+
+            with urllib.request.urlopen(f"{base_url}/api/status") as res:
+                persisted_status = json.loads(res.read().decode("utf-8"))
+                persisted_run = next(run for run in persisted_status["runs"] if run["run_id"] == run_id)
+                assert persisted_run["persistent"] is True
+                assert persisted_run["complete"] is True
 
             # Verify artifact delivery via HTTP and parse run.json semantics
             print("Verifying map artifacts delivery over HTTP and contract in run.json...")

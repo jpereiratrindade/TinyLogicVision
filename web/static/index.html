@@ -536,6 +536,25 @@
           <span id="dense-schema-status" class="badge">AGUARDANDO SELEÇÃO</span>
         </div>
 
+        <div class="dense-workspace-context">
+          <div class="dense-workspace-icon">💾</div>
+          <div class="dense-workspace-details">
+            <span class="dense-workspace-label">Workspace persistente ativo</span>
+            <code id="dense-workspace-path">carregando…</code>
+            <small>Classificações concluídas são salvas automaticamente em <code id="dense-output-preview">runs/&lt;run_id&gt;/</code> e permanecem no disco até exclusão explícita.</small>
+          </div>
+          <span class="badge badge-success">PERSISTÊNCIA ATIVA</span>
+          <button id="btn-copy-workspace-path" type="button" class="btn btn-sm btn-outline" title="Copiar caminho do workspace">Copiar caminho</button>
+        </div>
+        <div class="dense-saved-runs-row">
+          <label for="dense-saved-runs">Classificações persistidas:</label>
+          <select id="dense-saved-runs" class="input-select">
+            <option value="">Nenhuma classificação salva</option>
+          </select>
+          <button id="btn-open-saved-run" type="button" class="btn btn-sm btn-outline" disabled>Reabrir resultado</button>
+          <span id="dense-saved-runs-count" class="badge">0 salvas</span>
+        </div>
+
         <div class="dense-sliders-row">
           <div class="slider-group">
             <div class="slider-label-row">
@@ -579,6 +598,18 @@
 
         <!-- Dense Results Interactive Viewer -->
         <div id="dense-results-panel" class="dense-results-box hidden">
+          <div class="dense-run-persistence">
+            <div>
+              <span class="dense-workspace-label">Execução persistida</span>
+              <strong id="dense-run-id" class="mono text-cyan">-</strong>
+            </div>
+            <div class="dense-run-directory">
+              <span>Diretório:</span>
+              <code id="dense-run-path">-</code>
+            </div>
+            <span id="dense-persistence-status" class="badge badge-success">SALVA NO DISCO</span>
+            <button id="btn-copy-run-path" type="button" class="btn btn-sm btn-outline">Copiar diretório</button>
+          </div>
           <div class="dense-viewer-header">
             <div class="dense-view-modes">
               <button class="btn btn-sm btn-mode active" data-mode="overlay">Overlay Canônico (W×H)</button>
