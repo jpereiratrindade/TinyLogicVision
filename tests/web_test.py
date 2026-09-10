@@ -663,6 +663,16 @@ def main():
                         assert res.status == 200
                         assert len(res.read()) > 0
 
+                # Streaming omits classification.csv by default; inspection must use decisions.bin directly.
+                assert not (REPO_ROOT / ".tinyvision" / "runs" / s2_run_id / "classification.csv").exists()
+                with urllib.request.urlopen(f"{base_url}/api/runs/{s2_run_id}/inspect?x=8&y=8") as res:
+                    assert res.status == 200
+                    s2_inspection = json.loads(res.read().decode("utf-8"))
+                    assert s2_inspection["success"] is True
+                    assert s2_inspection["decision"]["grid_x"] == "1"
+                    assert s2_inspection["decision"]["grid_y"] == "1"
+                    assert s2_inspection["decision"]["predicted_class"] in ("vegetacao", "solo")
+
                 # A 256-input model must reject an RGB-only dense source.
                 invalid_s2_dense_payload = json.dumps({
                     "model_name": s2_model_name,

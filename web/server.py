@@ -1432,11 +1432,16 @@ class TinyVisionRequestHandler(http.server.BaseHTTPRequestHandler):
                 with open(bin_file, "rb") as bf:
                     hdr = bf.read(64)
                     if len(hdr) == 64 and hdr[:8] == b"TLV_DEC\x00":
+                        version = struct.unpack("<I", hdr[8:12])[0]
                         rec_size = struct.unpack("<I", hdr[28:32])[0]
-                        bf.seek(64 + target_row * rec_size)
-                        raw = bf.read(rec_size)
-                        if len(raw) >= 32:
-                            bgx, bgy, box, boy, pred_idx, sec_idx, prob, sec_prob, margin, is_unc = struct.unpack("<IIIIHHfffB", raw[:29])
+                        record_struct = struct.Struct("<IIIIHHfffB3x")
+                        if version == 1 and rec_size == record_struct.size:
+                            bf.seek(64 + target_row * rec_size)
+                            raw = bf.read(rec_size)
+                        else:
+                            raw = b""
+                        if len(raw) == record_struct.size:
+                            bgx, bgy, box, boy, pred_idx, sec_idx, prob, sec_prob, margin, is_unc = record_struct.unpack(raw)
                             classes = meta.get("classes", [])
                             pred_name = classes[pred_idx] if pred_idx < len(classes) else ""
                             sec_name = classes[sec_idx] if len(classes) > 1 and sec_idx < len(classes) else ""

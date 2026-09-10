@@ -1770,7 +1770,7 @@ function renderDenseMapResults(runId, metadata) {
     try {
       const inspRes = await fetch(`/api/runs/${runId}/inspect?x=${clickX}&y=${clickY}`);
       const inspData = await inspRes.json();
-      if (!inspData.success) return;
+      if (!inspData.success) throw new Error(inspData.error || 'Decisão não encontrada');
 
       const d = inspData.decision;
       el.inspGrid.textContent = `(${d.grid_x}, ${d.grid_y})`;
@@ -1807,7 +1807,11 @@ function renderDenseMapResults(runId, metadata) {
         el.inspStatus.className = 'badge badge-classified';
       }
     } catch (err) {
-      // inspection failed
+      el.inspStatus.textContent = 'ERRO DE LEITURA';
+      el.inspStatus.className = 'badge badge-uncertain';
+      el.inspTop1Class.textContent = '-';
+      el.inspTop1Prob.textContent = '-';
+      console.warn('Falha na inspeção espacial:', err);
     }
   };
 
