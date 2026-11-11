@@ -316,3 +316,9 @@ See [TV-01A](docs/TV-01A-generalization-observatory.md), the
 
 This project is licensed under the **GNU General Public License v3.0** (GPL-3.0).
 See the [LICENSE](LICENSE) file for the full license text.
+
+## Premissas de desenvolvimento
+
+**Simples, leve. Sempre pronto. Sempre incompleto!**
+
+[Significado e símbolos das premissas](docs/sister-principles/README.md).
